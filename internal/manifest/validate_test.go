@@ -101,3 +101,70 @@ func TestValidateRejectsWrongSchemaVersion(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Message, "schema")
 }
+
+func TestValidateReportsDuplicateCategoryID(t *testing.T) {
+	r := &manifest.Resolved{
+		Manifest: manifest.Manifest{Schema: 1},
+		Categories: []manifest.Category{
+			{ID: "dev", Name: "Dev"},
+			{ID: "dev", Name: "Dev Again"},
+		},
+	}
+	errs := manifest.Validate(r).Errors()
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "categories/dev.yaml", errs[0].File)
+	assert.Equal(t, "id", errs[0].Field)
+	assert.Equal(t, `duplicate category id "dev"`, errs[0].Message)
+}
+
+func TestValidateReportsDuplicateItemID(t *testing.T) {
+	r := &manifest.Resolved{
+		Manifest: manifest.Manifest{Schema: 1},
+		Categories: []manifest.Category{{
+			ID:   "dev",
+			Name: "Dev",
+			Items: []manifest.Item{
+				{ID: "go", Name: "Go", Type: manifest.ItemApt, Packages: []string{"go"}, CategoryID: "dev"},
+				{ID: "go", Name: "Go Again", Type: manifest.ItemApt, Packages: []string{"go"}, CategoryID: "dev"},
+			},
+		}},
+	}
+	errs := manifest.Validate(r).Errors()
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "categories/dev.yaml", errs[0].File)
+	assert.Equal(t, "dev/go", errs[0].Ref)
+	assert.Equal(t, "id", errs[0].Field)
+	assert.Equal(t, "duplicate item id", errs[0].Message)
+}
+
+func TestValidateOrdersSourceProblemsDeterministically(t *testing.T) {
+	r := &manifest.Resolved{
+		Manifest: manifest.Manifest{Schema: 1},
+		Categories: []manifest.Category{{
+			ID:   "dev",
+			Name: "Dev",
+			Items: []manifest.Item{{
+				ID:      "bad",
+				Name:    "Bad",
+				Type:    manifest.ItemTarball,
+				Version: "1.0.0",
+				Source: manifest.Source{
+					"amd64": "http://example.com/bad-amd64.tar.gz",
+					"arm64": "http://example.com/bad-arm64.tar.gz",
+				},
+				SHA256: manifest.Source{
+					"amd64": "deadbeef",
+					"arm64": "deadbeef",
+				},
+				CategoryID: "dev",
+			}},
+		}},
+	}
+	errs := manifest.Validate(r).Errors()
+
+	require.Len(t, errs, 2)
+	assert.Contains(t, errs[0].Message, "source for arch amd64 must use https")
+	assert.Contains(t, errs[1].Message, "source for arch arm64 must use https")
+}
