@@ -75,14 +75,58 @@ func TestRedactorMasksEveryOccurrence(t *testing.T) {
 }
 
 func TestRedactorHandlesOverlappingSecrets(t *testing.T) {
-	s := secrets.New()
-	s.Set("SHORT", "abc")
-	s.Set("LONG", "abc123")
+	cases := []struct {
+		name      string
+		shortName string
+		shortVal  string
+		longName  string
+		longVal   string
+		line      string
+	}{
+		{
+			name:      "short secret is a prefix of the long one",
+			shortName: "AAA_PREFIX_SHORT",
+			shortVal:  "abc",
+			longName:  "ZZZ_PREFIX_LONG",
+			longVal:   "abc123",
+			line:      "value abc123 here",
+		},
+		{
+			name:      "short secret is a suffix of the long one",
+			shortName: "AAA_SUFFIX_SHORT",
+			shortVal:  "xyz",
+			longName:  "ZZZ_SUFFIX_LONG",
+			longVal:   "789xyz",
+			line:      "value 789xyz here",
+		},
+		{
+			name:      "short secret is an infix of the long one",
+			shortName: "AAA_INFIX_SHORT",
+			shortVal:  "mid",
+			longName:  "ZZZ_INFIX_LONG",
+			longVal:   "prefmidsuf",
+			line:      "value prefmidsuf here",
+		},
+	}
 
-	got := secrets.NewRedactor(s).Redact("value abc123 here")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := secrets.New()
+			// Names are chosen so alphabetical order (AAA_... < ZZZ_...) is
+			// the OPPOSITE of the correct redaction order (longest value
+			// first). If NewRedactor ever stopped sorting by length and fell
+			// back to Store.Names()'s alphabetical order, the short secret
+			// would be masked first, leaving a fragment of the long secret
+			// visible in the output — exactly what this test must catch.
+			s.Set(tc.shortName, tc.shortVal)
+			s.Set(tc.longName, tc.longVal)
 
-	assert.Equal(t, "value *** here", got,
-		"the longer secret must be masked first, or its tail would leak")
+			got := secrets.NewRedactor(s).Redact(tc.line)
+
+			assert.Equal(t, "value *** here", got,
+				"the longer secret must be masked first, or a fragment of it would leak")
+		})
+	}
 }
 
 func TestRedactorIgnoresEmptySecrets(t *testing.T) {
