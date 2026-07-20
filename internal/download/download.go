@@ -18,6 +18,11 @@ import (
 // ErrChecksumMismatch reports that a download did not match its declared sha256.
 var ErrChecksumMismatch = errors.New("sha256 mismatch")
 
+// maxRedirects mirrors net/http's default redirect cap (10). Installing a
+// custom CheckRedirect disables that built-in default, so it must be
+// re-enforced explicitly whenever the caller hasn't supplied their own policy.
+const maxRedirects = 10
+
 // Downloader fetches a remote artifact to a local path, verifying it when a
 // checksum is declared.
 type Downloader interface {
@@ -31,17 +36,55 @@ type HTTPDownloader struct {
 
 // NewHTTPDownloader builds a downloader. A nil client uses a 10 minute
 // timeout, generous enough for large artifacts on a slow link.
+//
+// The client is never mutated in place: NewHTTPDownloader takes a shallow
+// copy and installs a CheckRedirect on the copy that fails any redirect hop
+// whose target is not https. Checking only the initial URL (as Fetch does)
+// is not enough on its own: net/http follows redirects automatically, so a
+// server answering an https request with a 302 to a plain http:// Location
+// would otherwise have the artifact downloaded over cleartext with
+// err == nil. These artifacts are tarballs, .deb packages and binaries that
+// Kamino installs as root, so a scheme downgrade here is a direct path to
+// running attacker-controlled code. Any CheckRedirect already set on the
+// caller's client is called first and its decision is honored before the
+// scheme check runs.
 func NewHTTPDownloader(client *http.Client) *HTTPDownloader {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Minute}
 	}
-	return &HTTPDownloader{client: client}
+	guarded := *client
+	guarded.CheckRedirect = redirectHTTPSGuard(client.CheckRedirect)
+	return &HTTPDownloader{client: &guarded}
+}
+
+// redirectHTTPSGuard builds a CheckRedirect function that fails any redirect
+// whose target URL is not https, naming the offending URL in the error. next,
+// when non-nil, is the caller's own CheckRedirect policy: it runs first and
+// its decision (error or nil) is honored unchanged. When next is nil, the
+// default net/http redirect-count limit is re-enforced, since setting
+// CheckRedirect at all bypasses net/http's built-in default.
+func redirectHTTPSGuard(next func(req *http.Request, via []*http.Request) error) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if next != nil {
+			if err := next(req, via); err != nil {
+				return err
+			}
+		} else if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("refusing redirect to %q: sources must use https", req.URL)
+		}
+		return nil
+	}
 }
 
 // Fetch downloads url to dest, verifying against sha256Hex when non-empty.
 // It refuses any URL that is not https before making a request: installer
 // steps run as root, and a plain-http source is trivially tamperable by
-// anything on the network path.
+// anything on the network path. The same https requirement is enforced on
+// every subsequent redirect hop (see NewHTTPDownloader).
 func (d *HTTPDownloader) Fetch(ctx context.Context, url, dest, sha256Hex string) error {
 	if !strings.HasPrefix(url, "https://") {
 		return fmt.Errorf("refusing to download %q: sources must use https", url)
