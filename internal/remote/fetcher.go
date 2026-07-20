@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -42,12 +43,14 @@ type HTTPFetcher struct {
 // The client is never mutated in place: NewHTTPFetcher takes a shallow copy
 // and installs a CheckRedirect on the copy that strips repo's auth header
 // (e.g. GitLab's PRIVATE-TOKEN) whenever a redirect crosses to a different
-// host than the one originally requested. net/http only does this
-// automatically for a hardcoded list of headers (Authorization,
+// origin (scheme or host) than the one originally requested. net/http only
+// does this automatically for a hardcoded list of headers (Authorization,
 // WWW-Authenticate, Cookie, Cookie2); provider-specific auth headers are not
-// on that list and would otherwise be forwarded to whatever host a redirect
-// points at. Any CheckRedirect already set on the caller's client is called
-// first and its decision is honored before the header is stripped.
+// on that list and would otherwise be forwarded to whatever origin a redirect
+// points at — including a same-host scheme downgrade from https to http,
+// which would transmit the header in the clear. Any CheckRedirect already
+// set on the caller's client is called first and its decision is honored
+// before the header is stripped.
 func NewHTTPFetcher(repo *Repo, cacheDir string, client *http.Client) *HTTPFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -63,8 +66,11 @@ func NewHTTPFetcher(repo *Repo, cacheDir string, client *http.Client) *HTTPFetch
 }
 
 // redirectAuthGuard builds a CheckRedirect function that prevents repo's
-// configured auth header from following a redirect to a different host than
-// the one the operator originally configured. next, when non-nil, is the
+// configured auth header from following a redirect to a different origin
+// than the one the operator originally configured. "Origin" here means both
+// scheme and host: a same-host redirect that downgrades from https to http
+// is just as much a leak as a redirect to a different host, since it would
+// put the header on the wire in the clear. next, when non-nil, is the
 // caller's own CheckRedirect policy: it runs first and its decision (error or
 // nil) is honored unchanged. When next is nil, the default net/http
 // redirect-count limit is re-enforced, since setting CheckRedirect at all
@@ -82,11 +88,21 @@ func redirectAuthGuard(repo *Repo, next func(req *http.Request, via []*http.Requ
 		if len(via) == 0 {
 			return nil
 		}
-		if name, _, ok := repo.AuthHeader(); ok && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		if name, _, ok := repo.AuthHeader(); ok && !sameOrigin(req.URL, via[0].URL) {
 			req.Header.Del(name)
 		}
 		return nil
 	}
+}
+
+// sameOrigin reports whether a and b share both scheme and host (which
+// includes the port, so https://x.com and https://x.com:8443 are different
+// origins). Comparing host alone is not enough to gate a credential header:
+// a redirect from https://x.com to http://x.com has an identical Host string
+// but strips the transport encryption the header's confidentiality relies
+// on, so it must be treated the same as a cross-host redirect.
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 // Stale reports whether any fetch in this session was served from the disk
