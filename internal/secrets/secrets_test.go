@@ -1,6 +1,8 @@
 package secrets_test
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,4 +138,26 @@ func TestRedactorIgnoresEmptySecrets(t *testing.T) {
 	got := secrets.NewRedactor(s).Redact("unchanged line")
 
 	assert.Equal(t, "unchanged line", got)
+}
+
+func TestNewRedactorWarnsOnShortSecretValuesButStillRedactsThem(t *testing.T) {
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prevDefault)
+
+	s := secrets.New()
+	s.Set("SHORT_TOKEN", "a")
+	s.Set("NORMAL_TOKEN", "sup3rs3cretvalue")
+
+	r := secrets.NewRedactor(s)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "SHORT_TOKEN", "must warn naming the short secret")
+	assert.NotContains(t, logged, "NORMAL_TOKEN", "must not warn about a normal-length secret")
+
+	// The warning must not come at the cost of skipping redaction: the short
+	// value is still masked everywhere it occurs.
+	got := r.Redact("token a seen here")
+	assert.Equal(t, "token *** seen here", got)
 }
