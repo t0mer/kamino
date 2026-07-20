@@ -51,17 +51,26 @@ func Detect() (Info, error) {
 }
 
 // ParseOSRelease extracts ID and VERSION_ID from an os-release stream.
+// Values may be quoted with either double or single quotes; matching quote pairs
+// are stripped. The returned distro ID is normalized to lowercase per the
+// os-release specification.
 func ParseOSRelease(r io.Reader) (distro, versionID string, err error) {
 	s := bufio.NewScanner(r)
 	for s.Scan() {
-		key, value, found := strings.Cut(s.Text(), "=")
+		line := s.Text()
+		// Skip comments and empty lines.
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
 		if !found {
 			continue
 		}
-		value = strings.Trim(strings.TrimSpace(value), `"`)
+		value = unquoteValue(value)
 		switch strings.TrimSpace(key) {
 		case "ID":
-			distro = value
+			distro = strings.ToLower(value)
 		case "VERSION_ID":
 			versionID = value
 		}
@@ -70,6 +79,20 @@ func ParseOSRelease(r io.Reader) (distro, versionID string, err error) {
 		return "", "", fmt.Errorf("scanning os-release: %w", err)
 	}
 	return distro, versionID, nil
+}
+
+// unquoteValue removes a matching pair of surrounding quotes (either " or ')
+// from a value. Only strips if the value is quoted with matching pairs;
+// unmatched or interior quotes are preserved.
+func unquoteValue(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') ||
+			(s[0] == '\'' && s[len(s)-1] == '\'') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // RequireUbuntuRoot returns an actionable error unless the host is Ubuntu and

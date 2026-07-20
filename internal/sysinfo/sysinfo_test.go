@@ -57,3 +57,81 @@ func TestRequireUbuntuRootRejectsNonRoot(t *testing.T) {
 func TestRequireUbuntuRootAcceptsUbuntuRoot(t *testing.T) {
 	assert.NoError(t, sysinfo.Info{Distro: "ubuntu", Root: true}.RequireUbuntuRoot())
 }
+
+func TestParseOSReleaseHandlesSingleQuotes(t *testing.T) {
+	in := `ID='ubuntu'
+VERSION_ID='24.04'
+`
+	distro, versionID, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	assert.Equal(t, "ubuntu", distro)
+	assert.Equal(t, "24.04", versionID)
+}
+
+func TestParseOSReleaseSingleQuotedPassesGuard(t *testing.T) {
+	in := `ID='ubuntu'
+VERSION_ID='24.04'
+`
+	distro, versionID, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	info := sysinfo.Info{Distro: distro, VersionID: versionID, Root: true}
+	assert.NoError(t, info.RequireUbuntuRoot())
+}
+
+func TestParseOSReleaseNormalizesToLowercase(t *testing.T) {
+	in := `ID=Ubuntu
+VERSION_ID="24.04"
+`
+	distro, versionID, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	assert.Equal(t, "ubuntu", distro)
+	assert.Equal(t, "24.04", versionID)
+}
+
+func TestParseOSReleaseMixedCasePassesGuard(t *testing.T) {
+	in := `ID=Ubuntu
+VERSION_ID="24.04"
+`
+	distro, _, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	info := sysinfo.Info{Distro: distro, Root: true}
+	assert.NoError(t, info.RequireUbuntuRoot())
+}
+
+func TestParseOSReleaseHandlesValueWithEqualsSign(t *testing.T) {
+	in := `ID="ubuntu"
+VERSION_ID="24.04"
+HOME_URL="https://example.com/?a=b"
+`
+	distro, versionID, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	assert.Equal(t, "ubuntu", distro)
+	assert.Equal(t, "24.04", versionID)
+}
+
+func TestParseOSReleaseSkipsCommentedLines(t *testing.T) {
+	in := `#ID=notubuntu
+ID=ubuntu
+VERSION_ID="24.04"
+`
+	distro, versionID, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	assert.Equal(t, "ubuntu", distro)
+	assert.Equal(t, "24.04", versionID)
+}
+
+func TestParseOSReleasePreservesQuotesInsideValue(t *testing.T) {
+	in := `ID="ubuntu"
+SOME_VALUE='value with "quote" inside'
+`
+	distro, _, err := sysinfo.ParseOSRelease(strings.NewReader(in))
+
+	require.NoError(t, err)
+	assert.Equal(t, "ubuntu", distro)
+}
