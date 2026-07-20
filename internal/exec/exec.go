@@ -40,6 +40,12 @@ func (r Result) Output() []string {
 
 // LineSink receives each captured output line as it is produced, so callers
 // can stream progress without waiting for the command to finish.
+//
+// Concurrency guarantee: implementations of CommandExecutor in this package
+// never call a LineSink from more than one goroutine at a time, even though
+// stdout and stderr are collected concurrently — calls are serialized
+// centrally. A LineSink therefore does not need its own locking to be safe
+// against concurrent invocation from this package.
 type LineSink func(stream, line string)
 
 // CommandExecutor runs commands.
