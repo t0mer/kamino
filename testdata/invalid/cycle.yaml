@@ -1,0 +1,14 @@
+id: dev
+name: Development
+order: 10
+items:
+  - id: a
+    name: A
+    type: apt
+    packages: ["a"]
+    depends_on: ["dev/b"]
+  - id: b
+    name: B
+    type: apt
+    packages: ["b"]
+    depends_on: ["dev/a"]

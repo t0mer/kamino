@@ -1,0 +1,25 @@
+id: tools
+name: Tools
+order: 20
+items:
+  - id: jq
+    name: jq
+    type: apt
+    packages: ["jq"]
+    check: "jq --version"
+    check_contains: "jq-"
+
+  - id: docker
+    name: Docker Engine
+    type: script
+    source: "https://get.docker.com"
+    check: "docker --version"
+    check_contains: "Docker version"
+
+  - id: docker-compose
+    name: Docker Compose plugin
+    type: apt
+    packages: ["docker-compose-plugin"]
+    depends_on: ["tools/docker"]
+    check: "docker compose version"
+    check_contains: "Docker Compose version"

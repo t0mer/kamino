@@ -1,0 +1,10 @@
+id: dev
+name: Development
+order: 10
+items:
+  - id: go
+    name: Go
+    type: tarball
+    version: "1.24.5"
+    source:
+      amd64: "https://go.dev/dl/go{version}.linux-amd64.tar.gz"

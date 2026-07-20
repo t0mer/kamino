@@ -1,0 +1,8 @@
+id: dev
+name: Development
+order: 10
+items:
+  - id: go
+    name: Go
+    type: tarball
+    verzion: "1.24.5"
