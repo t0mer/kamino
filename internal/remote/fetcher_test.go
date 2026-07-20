@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,164 @@ func TestFetchHonorsCallerCheckRedirect(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no redirects allowed")
+}
+
+func TestRedirectAuthGuardStripsHeaderOnSchemeDowngrade(t *testing.T) {
+	// A same-host redirect from https to http is a protocol downgrade to
+	// cleartext. The guard used to compare only Host, so this case had an
+	// identical Host string and was (wrongly) treated as same-origin,
+	// leaving the auth header on the request to be sent in the clear.
+	//
+	// A genuine end-to-end TLS -> cleartext hop on the *same* host:port is
+	// not producible with httptest (or any real listener): a single TCP
+	// port either speaks TLS or plaintext HTTP, never both, so two servers
+	// sharing an authority string is impossible. Per the task instructions,
+	// this instead unit-tests the guard's decision function directly
+	// against constructed *http.Request values with differing schemes,
+	// via the RedirectAuthGuardForTest test-only export.
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main", "")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	guard := remote.RedirectAuthGuardForTest(repo, nil)
+
+	origURL, err := url.Parse("https://x.example.com/manifest.yaml")
+	require.NoError(t, err)
+	origReq := &http.Request{URL: origURL}
+
+	redirURL, err := url.Parse("http://x.example.com/manifest.yaml")
+	require.NoError(t, err)
+	redirReq := &http.Request{URL: redirURL, Header: make(http.Header)}
+	redirReq.Header.Set("PRIVATE-TOKEN", "s3cret")
+	require.Equal(t, "s3cret", redirReq.Header.Get("PRIVATE-TOKEN"), "sanity check: header must be set before the guard runs")
+
+	err = guard(redirReq, []*http.Request{origReq})
+
+	require.NoError(t, err)
+	assert.Empty(t, redirReq.Header.Get("PRIVATE-TOKEN"),
+		"an https -> http same-host redirect must strip the auth header, not just a cross-host one")
+}
+
+func TestRedirectAuthGuardTreatsPortChangeAsCrossHost(t *testing.T) {
+	// Guard against regressing the reviewed fail-closed behavior: a port
+	// change on an otherwise identical scheme+hostname must still be
+	// treated as cross-host and strip the header.
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main", "")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	guard := remote.RedirectAuthGuardForTest(repo, nil)
+
+	origURL, err := url.Parse("https://x.example.com/manifest.yaml")
+	require.NoError(t, err)
+	origReq := &http.Request{URL: origURL}
+
+	redirURL, err := url.Parse("https://x.example.com:8443/manifest.yaml")
+	require.NoError(t, err)
+	redirReq := &http.Request{URL: redirURL, Header: make(http.Header)}
+	redirReq.Header.Set("PRIVATE-TOKEN", "s3cret")
+	require.Equal(t, "s3cret", redirReq.Header.Get("PRIVATE-TOKEN"), "sanity check: header must be set before the guard runs")
+
+	err = guard(redirReq, []*http.Request{origReq})
+
+	require.NoError(t, err)
+	assert.Empty(t, redirReq.Header.Get("PRIVATE-TOKEN"), "a port change must still be treated as cross-host")
+}
+
+func TestFetchStripsAuthHeaderOnCrossHostRedirectEvenWhenCallerAllowsIt(t *testing.T) {
+	// The guard layers on top of any caller-supplied CheckRedirect: even
+	// when the caller's own policy explicitly permits the redirect (returns
+	// nil), the guard must still strip the header on a cross-host hop.
+	var targetGotToken string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetGotToken = r.Header.Get("PRIVATE-TOKEN")
+		_, _ = w.Write([]byte("schema: 1"))
+	}))
+	defer target.Close()
+
+	var originGotToken string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originGotToken = r.Header.Get("PRIVATE-TOKEN")
+		http.Redirect(w, r, target.URL+"/redirected", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main",
+		origin.URL+"/{ref}/{path}")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	client := *origin.Client()
+	var callerInvoked bool
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		callerInvoked = true
+		return nil // caller explicitly allows the redirect
+	}
+
+	f := remote.NewHTTPFetcher(repo, t.TempDir(), &client)
+	body, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "schema: 1", string(body))
+	assert.True(t, callerInvoked, "the caller's CheckRedirect must still run")
+	assert.Equal(t, "s3cret", originGotToken)
+	assert.Empty(t, targetGotToken,
+		"the guard must strip the header on a cross-host hop even though the caller's CheckRedirect allowed it")
+}
+
+func TestFetchNilClientStillGuardsCrossHostRedirect(t *testing.T) {
+	// NewHTTPFetcher builds its own default *http.Client when given nil.
+	// That default-built client must get the same redirect guard as one
+	// supplied by the caller. Proven behaviorally: pass nil and confirm the
+	// header still doesn't reach a cross-host redirect target.
+	var targetGotToken string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetGotToken = r.Header.Get("PRIVATE-TOKEN")
+		_, _ = w.Write([]byte("schema: 1"))
+	}))
+	defer target.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/redirected", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main",
+		origin.URL+"/{ref}/{path}")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	f := remote.NewHTTPFetcher(repo, t.TempDir(), nil)
+	body, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "schema: 1", string(body))
+	assert.Empty(t, targetGotToken, "the fetcher's own default client must still have the redirect guard installed")
+}
+
+func TestFetchStopsAfterMaxRedirectsWithNoCallerPolicy(t *testing.T) {
+	// Guards against an unbounded follower: with no caller CheckRedirect set,
+	// the guard must re-enforce net/http's normal 10-redirect cap rather than
+	// following an infinite redirect loop forever.
+	var hits int32
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.Redirect(w, r, srv.URL+"/loop", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	repo, err := remote.ParseRepo("https://github.com/t0mer/cfg", "main",
+		srv.URL+"/{ref}/{path}")
+	require.NoError(t, err)
+
+	f := remote.NewHTTPFetcher(repo, t.TempDir(), srv.Client())
+	_, err = f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stopped after 10 redirects")
+	assert.LessOrEqual(t, atomic.LoadInt32(&hits), int32(12),
+		"the redirect chain must actually terminate, not run unbounded")
 }
 
 func TestFetch404IsNotFound(t *testing.T) {
