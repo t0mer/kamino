@@ -161,3 +161,23 @@ func TestNewRedactorWarnsOnShortSecretValuesButStillRedactsThem(t *testing.T) {
 	got := r.Redact("token a seen here")
 	assert.Equal(t, "token *** seen here", got)
 }
+
+func TestRedactorSnapshotsAtConstructionTime(t *testing.T) {
+	s := secrets.New()
+	s.Set("EARLY", "before")
+
+	r := secrets.NewRedactor(s)
+
+	// Registered on the store AFTER the redactor was built.
+	s.Set("LATE", "after")
+
+	got := r.Redact("value before and after together")
+
+	// "before" was registered before NewRedactor ran and is redacted; "after"
+	// was registered afterward and leaks through, because NewRedactor
+	// snapshots the store once rather than reading it live. This pins the
+	// documented contract: callers must register every secret for a run
+	// before constructing that run's Redactor.
+	assert.Equal(t, "value *** and after together", got,
+		"secrets set after NewRedactor must not be redacted (snapshot semantics)")
+}
