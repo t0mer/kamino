@@ -2,6 +2,7 @@ package remote_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +71,88 @@ func TestFetchSendsAuthHeader(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "token s3cret", got)
+}
+
+func TestFetchStripsAuthHeaderOnCrossHostRedirect(t *testing.T) {
+	// GitLab authenticates with PRIVATE-TOKEN, a header that is NOT in
+	// net/http's hardcoded cross-host-redirect-strip list (that list only
+	// covers Authorization/WWW-Authenticate/Cookie/Cookie2). Without the
+	// fetcher's own guard, a redirect from the configured host to a
+	// different host would leak the operator's token to that third party.
+	var targetGotToken string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetGotToken = r.Header.Get("PRIVATE-TOKEN")
+		_, _ = w.Write([]byte("schema: 1"))
+	}))
+	defer target.Close()
+
+	var originGotToken string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originGotToken = r.Header.Get("PRIVATE-TOKEN")
+		http.Redirect(w, r, target.URL+"/redirected", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main",
+		origin.URL+"/{ref}/{path}")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	f := remote.NewHTTPFetcher(repo, t.TempDir(), origin.Client())
+	body, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "schema: 1", string(body))
+	assert.Equal(t, "s3cret", originGotToken, "the operator-configured host should still receive the token")
+	assert.Empty(t, targetGotToken, "a cross-host redirect target must never receive the token")
+}
+
+func TestFetchKeepsAuthHeaderOnSameHostRedirect(t *testing.T) {
+	var finalGotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/main/manifest.yaml" {
+			http.Redirect(w, r, "/main/other.yaml", http.StatusFound)
+			return
+		}
+		finalGotToken = r.Header.Get("PRIVATE-TOKEN")
+		_, _ = w.Write([]byte("schema: 1"))
+	}))
+	defer srv.Close()
+
+	repo, err := remote.ParseRepo("https://gitlab.com/t0mer/cfg", "main",
+		srv.URL+"/{ref}/{path}")
+	require.NoError(t, err)
+	repo.Token = "s3cret"
+
+	f := remote.NewHTTPFetcher(repo, t.TempDir(), srv.Client())
+	body, err := f.Fetch(context.Background(), "main", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "schema: 1", string(body))
+	assert.Equal(t, "s3cret", finalGotToken, "a same-host redirect must still carry the auth header")
+}
+
+func TestFetchHonorsCallerCheckRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("schema: 1"))
+	}))
+	defer target.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/redirected", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	client := *srv.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("no redirects allowed")
+	}
+
+	f := remote.NewHTTPFetcher(testRepo(t, srv), t.TempDir(), &client)
+	_, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no redirects allowed")
 }
 
 func TestFetch404IsNotFound(t *testing.T) {

@@ -7,9 +7,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
+
+// maxRedirects mirrors net/http's default redirect cap (10). Installing a
+// custom CheckRedirect disables that built-in default, so it must be
+// re-enforced explicitly whenever the caller hasn't supplied their own policy.
+const maxRedirects = 10
 
 // ErrNotFound reports that a path does not exist in the config repo.
 var ErrNotFound = errors.New("not found in config repo")
@@ -32,15 +38,54 @@ type HTTPFetcher struct {
 }
 
 // NewHTTPFetcher builds a fetcher for repo. A nil client uses a 30s default.
+//
+// The client is never mutated in place: NewHTTPFetcher takes a shallow copy
+// and installs a CheckRedirect on the copy that strips repo's auth header
+// (e.g. GitLab's PRIVATE-TOKEN) whenever a redirect crosses to a different
+// host than the one originally requested. net/http only does this
+// automatically for a hardcoded list of headers (Authorization,
+// WWW-Authenticate, Cookie, Cookie2); provider-specific auth headers are not
+// on that list and would otherwise be forwarded to whatever host a redirect
+// points at. Any CheckRedirect already set on the caller's client is called
+// first and its decision is honored before the header is stripped.
 func NewHTTPFetcher(repo *Repo, cacheDir string, client *http.Client) *HTTPFetcher {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	guarded := *client
+	guarded.CheckRedirect = redirectAuthGuard(repo, client.CheckRedirect)
 	return &HTTPFetcher{
 		repo:   repo,
-		client: client,
+		client: &guarded,
 		cache:  diskCache{dir: cacheDir},
 		mem:    map[string][]byte{},
+	}
+}
+
+// redirectAuthGuard builds a CheckRedirect function that prevents repo's
+// configured auth header from following a redirect to a different host than
+// the one the operator originally configured. next, when non-nil, is the
+// caller's own CheckRedirect policy: it runs first and its decision (error or
+// nil) is honored unchanged. When next is nil, the default net/http
+// redirect-count limit is re-enforced, since setting CheckRedirect at all
+// bypasses net/http's built-in default.
+func redirectAuthGuard(repo *Repo, next func(req *http.Request, via []*http.Request) error) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if next != nil {
+			if err := next(req, via); err != nil {
+				return err
+			}
+		} else if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+
+		if len(via) == 0 {
+			return nil
+		}
+		if name, _, ok := repo.AuthHeader(); ok && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			req.Header.Del(name)
+		}
+		return nil
 	}
 }
 
