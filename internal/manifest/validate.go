@@ -157,7 +157,14 @@ func validateItem(file string, it Item) Problems {
 		}
 	}
 
-	for arch, url := range it.Source {
+	sourceArches := make([]string, 0, len(it.Source))
+	for arch := range it.Source {
+		sourceArches = append(sourceArches, arch)
+	}
+	sort.Strings(sourceArches)
+
+	for _, arch := range sourceArches {
+		url := it.Source[arch]
 		if url != "" && !strings.HasPrefix(url, "https://") {
 			problem("source", fmt.Sprintf("source for arch %s must use https, got %q", arch, url), SeverityError)
 		}
