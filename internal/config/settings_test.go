@@ -68,3 +68,45 @@ func TestConfiguredRequiresRepoURL(t *testing.T) {
 	assert.False(t, config.Settings{Ref: "main"}.Configured())
 	assert.True(t, config.Settings{RepoURL: "https://x/y/z"}.Configured())
 }
+
+func TestSaveRemovesTempFileWhenRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-create settings.json as a directory so rename will fail
+	settingsPath := filepath.Join(dir, "settings.json")
+	require.NoError(t, os.Mkdir(settingsPath, 0o755))
+
+	err := config.Save(dir, config.Settings{RepoURL: "https://example.com/repo", Token: "s3cret"})
+
+	// Save should return an error due to the failed rename
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "replacing settings")
+
+	// The temp file should have been cleaned up
+	tmpPath := filepath.Join(dir, "settings.json.tmp")
+	_, statErr := os.Stat(tmpPath)
+	assert.ErrorIs(t, statErr, os.ErrNotExist, "temp file should be removed after failed rename")
+}
+
+func TestSaveCreatesFreshDataDirWith0700Permissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "kamino-data")
+	require.NoError(t, config.Save(dir, config.Settings{RepoURL: "https://example.com/repo"}))
+
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(),
+		"data dir should be created with 0700 permissions for security")
+}
+
+func TestLoadIncludesFilePathInError(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	// Write invalid JSON to the file
+	require.NoError(t, os.WriteFile(settingsPath, []byte("{invalid json"), 0o600))
+
+	_, err := config.Load(dir)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), settingsPath,
+		"error message should include the full path to the settings file for debugging")
+}

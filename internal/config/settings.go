@@ -39,23 +39,24 @@ type Overrides struct {
 // Load reads settings.json from dataDir. A missing file yields zero Settings
 // and no error: an unconfigured install is a normal first-run state.
 func Load(dataDir string) (Settings, error) {
-	b, err := os.ReadFile(filepath.Join(dataDir, SettingsFile))
+	path := filepath.Join(dataDir, SettingsFile)
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Settings{}, nil
 	}
 	if err != nil {
-		return Settings{}, fmt.Errorf("reading settings: %w", err)
+		return Settings{}, fmt.Errorf("reading settings from %s: %w", path, err)
 	}
 	var s Settings
 	if err := json.Unmarshal(b, &s); err != nil {
-		return Settings{}, fmt.Errorf("parsing settings: %w", err)
+		return Settings{}, fmt.Errorf("parsing settings from %s: %w", path, err)
 	}
 	return s, nil
 }
 
 // Save writes settings.json atomically at mode 0600.
 func Save(dataDir string, s Settings) error {
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
@@ -69,6 +70,7 @@ func Save(dataDir string, s Settings) error {
 		return fmt.Errorf("writing settings: %w", err)
 	}
 	if err := os.Rename(tmp, final); err != nil {
+		os.Remove(tmp) // Clean up the temp file if rename fails
 		return fmt.Errorf("replacing settings: %w", err)
 	}
 	return nil
