@@ -71,13 +71,58 @@ func TestRawBaseTemplateOverridesProvider(t *testing.T) {
 		r.RawURL("abc123", "categories/dev.yaml"))
 }
 
-func TestGenericProviderWithoutTemplateIsError(t *testing.T) {
-	_, err := remote.ParseRepo("https://git.example.com/t0mer/cfg", "main", "")
-	require.NoError(t, err, "parsing succeeds; the error surfaces when building a raw URL")
+func TestGenericProviderWithoutTemplateRawURLIsEmpty(t *testing.T) {
+	r, err := remote.ParseRepo("https://git.example.com/t0mer/cfg", "main", "")
+	require.NoError(t, err)
 
-	r, _ := remote.ParseRepo("https://git.example.com/t0mer/cfg", "main", "")
 	assert.Equal(t, "", r.RawURL("abc123", "manifest.yaml"),
 		"a generic host with no template cannot build a raw URL")
+}
+
+func TestParseRepoRejectsRawBaseTemplateMissingRef(t *testing.T) {
+	_, err := remote.ParseRepo("https://git.example.com/t0mer/cfg", "main", "https://git.example.com/t0mer/cfg/{path}")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "{ref}")
+}
+
+func TestParseRepoRejectsRawBaseTemplateMissingPath(t *testing.T) {
+	_, err := remote.ParseRepo("https://git.example.com/t0mer/cfg", "main", "https://git.example.com/t0mer/cfg/{ref}")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "{path}")
+}
+
+func TestParseRepoAcceptsRawBaseTemplateWithBothPlaceholders(t *testing.T) {
+	r, err := remote.ParseRepo(
+		"https://git.example.com/t0mer/cfg", "main",
+		"https://git.example.com/t0mer/cfg/raw/branch/{ref}/{path}",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://git.example.com/t0mer/cfg/raw/branch/{ref}/{path}", r.RawBaseTemplate)
+}
+
+func TestParseRepoDetectsProviderCaseInsensitiveHost(t *testing.T) {
+	r, err := remote.ParseRepo("https://GitHub.COM/t0mer/kamino-config", "main", "")
+	require.NoError(t, err)
+	assert.Equal(t, remote.ProviderGitHub, r.Provider)
+}
+
+func TestParseRepoDetectsProviderWithPort(t *testing.T) {
+	r, err := remote.ParseRepo("https://github.com:8443/t0mer/kamino-config", "main", "")
+	require.NoError(t, err)
+	assert.Equal(t, remote.ProviderGitHub, r.Provider)
+}
+
+func TestRawURLSelfHostedGitLabWithPort(t *testing.T) {
+	// gitlab.com on a non-standard port still detects as ProviderGitLab
+	// (host matching ignores the port), and the port must be preserved in
+	// r.Host so the built raw URL still points at it.
+	r, err := remote.ParseRepo("https://gitlab.com:8443/t0mer/kamino-config", "main", "")
+	require.NoError(t, err)
+	require.Equal(t, remote.ProviderGitLab, r.Provider)
+
+	assert.Equal(t,
+		"https://gitlab.com:8443/t0mer/kamino-config/-/raw/abc123/manifest.yaml",
+		r.RawURL("abc123", "manifest.yaml"))
 }
 
 func TestParseRepoRejectsNonHTTPS(t *testing.T) {

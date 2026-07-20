@@ -54,6 +54,19 @@ func ParseRepo(repoURL, ref, rawBaseTemplate string) (*Repo, error) {
 		return nil, fmt.Errorf("repo URL path must be owner/repo, got %q", u.Path)
 	}
 
+	if rawBaseTemplate != "" {
+		hasRef := strings.Contains(rawBaseTemplate, "{ref}")
+		hasPath := strings.Contains(rawBaseTemplate, "{path}")
+		if !hasRef || !hasPath {
+			missing := "{ref}"
+			if hasRef {
+				missing = "{path}"
+			}
+			return nil, fmt.Errorf("raw base template %q is missing the %s placeholder; template must look like %q",
+				rawBaseTemplate, missing, "https://host/{owner}/{repo}/raw/{ref}/{path}")
+		}
+	}
+
 	if ref == "" {
 		ref = DefaultRef
 	}
@@ -67,10 +80,11 @@ func ParseRepo(repoURL, ref, rawBaseTemplate string) (*Repo, error) {
 		Name:            strings.TrimSuffix(parts[1], ".git"),
 	}
 
+	normalizedHost := strings.ToLower(u.Hostname())
 	switch {
-	case u.Host == "github.com":
+	case normalizedHost == "github.com":
 		r.Provider = ProviderGitHub
-	case u.Host == "gitlab.com":
+	case normalizedHost == "gitlab.com":
 		r.Provider = ProviderGitLab
 	default:
 		// Self-hosted instances are indistinguishable by URL alone. Treat them
