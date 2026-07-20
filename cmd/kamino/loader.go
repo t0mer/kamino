@@ -17,7 +17,15 @@ import (
 type dirFetcher struct{ root string }
 
 func (d dirFetcher) Fetch(_ context.Context, _ string, path string) ([]byte, error) {
-	b, err := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(path)))
+	// path comes from the config repo's own manifest.yaml (its categories/
+	// profiles lists), which is untrusted content — it must not be able to
+	// walk this fetcher (running as root) outside the configured root dir.
+	p, err := remote.SafeJoin(d.root, filepath.FromSlash(path))
+	if err != nil {
+		return nil, fmt.Errorf("config path %q escapes config dir %q: %w", path, d.root, err)
+	}
+
+	b, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		return nil, fmt.Errorf("%s: %w", path, remote.ErrNotFound)
 	}

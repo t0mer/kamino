@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // diskCache mirrors fetched files so a provider outage cannot block a rebuild.
@@ -19,11 +18,9 @@ type diskCache struct {
 // be able to make the fetcher (running as root) write or read files outside
 // its own cache directory.
 func (c diskCache) path(ref, file string) (string, error) {
-	root := filepath.Clean(c.dir)
-	p := filepath.Join(root, ref, filepath.FromSlash(file))
-	rel, err := filepath.Rel(root, p)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("cache path escapes cache dir: ref=%q file=%q", ref, file)
+	p, err := SafeJoin(c.dir, ref, filepath.FromSlash(file))
+	if err != nil {
+		return "", fmt.Errorf("cache path escapes cache dir: ref=%q file=%q: %w", ref, file, err)
 	}
 	return p, nil
 }
