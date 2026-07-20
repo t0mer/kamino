@@ -76,17 +76,22 @@ func (e *RealExecutor) Run(ctx context.Context, c Command, out LineSink) (Result
 	go collect("stdout", stdout, &result.Stdout)
 	go collect("stderr", stderr, &result.Stderr)
 
+	// cmd.Wait closes the stdout/stderr pipes as soon as it sees the process
+	// exit. Per the os/exec docs, it is incorrect to call Wait before all
+	// reads from the pipes have completed, so the collectors are drained
+	// first and only then is Wait called.
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		wg.Wait()
+		done <- cmd.Wait()
+	}()
 
 	select {
 	case <-ctx.Done():
 		killGroup(cmd)
 		<-done
-		wg.Wait()
 		return result, fmt.Errorf("running %s: %w", c.Path, ctx.Err())
 	case waitErr := <-done:
-		wg.Wait()
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
 			// Ran and failed: that is a Result, not an error.
