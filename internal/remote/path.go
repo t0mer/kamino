@@ -7,13 +7,19 @@ import (
 )
 
 // SafeJoin joins root with the given path segments and returns the resulting
-// path, rejecting any segment or combination that would resolve outside
-// root. Path segments handled by this function ultimately come from the
-// config repo — manifest category/profile paths, stack file names, cache
-// ref/file components — which is untrusted content. Since callers of this
-// package run as root, a segment containing ".." or an absolute path must
-// never be allowed to make them read or write files outside the intended
-// root directory.
+// path, performing a LEXICAL check to reject any segment or combination that
+// would resolve outside root. Path segments handled by this function ultimately
+// come from the config repo — manifest category/profile paths, stack file names,
+// cache ref/file components — which is untrusted content. Since callers of this
+// package run as root, a segment containing ".." or an absolute path must never
+// be allowed to make them read or write files outside the intended root
+// directory.
+//
+// The check is purely lexical: it uses filepath.Clean and filepath.Rel, not
+// filepath.EvalSymlinks. A symlink placed inside the root that points outside it
+// will not be detected. This gap is acceptable because exploiting it requires
+// write access to the root directory itself — a stronger threat model than the
+// untrusted-manifest-string attack this guard defends against.
 func SafeJoin(root string, elem ...string) (string, error) {
 	for _, e := range elem {
 		if filepath.IsAbs(e) {

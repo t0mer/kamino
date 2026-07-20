@@ -74,7 +74,7 @@ func TestValidateRejectsAbsoluteCategoryPath(t *testing.T) {
 	cfgDir := filepath.Join(base, "cfg")
 	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
 
-	absTarget := filepath.Join(base, "absolute-secret.yaml")
+	absTarget := filepath.Join(base, "restricted.yaml")
 	writeFile(t, absTarget, validCategoryYAML)
 	writeMinimalManifest(t, cfgDir, absTarget)
 
@@ -82,7 +82,7 @@ func TestValidateRejectsAbsoluteCategoryPath(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), absTarget)
-	assert.Contains(t, err.Error(), "absolute")
+	assert.Contains(t, err.Error(), "is absolute")
 	assert.NotContains(t, out, "OK")
 }
 
