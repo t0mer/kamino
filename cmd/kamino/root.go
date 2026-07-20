@@ -11,11 +11,13 @@ import (
 
 // globalFlags holds settings shared by every subcommand.
 type globalFlags struct {
-	logLevel string
-	dataDir  string
-	repo     string
-	ref      string
-	token    string
+	logLevel  string
+	dataDir   string
+	repo      string
+	ref       string
+	token     string
+	rawBase   string
+	configDir string
 }
 
 var flags globalFlags
@@ -37,8 +39,15 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&flags.repo, "repo", "", "config repo URL (overrides saved settings)")
 	pf.StringVar(&flags.ref, "ref", "", "config repo branch, tag or SHA (default main)")
 	pf.StringVar(&flags.token, "token", "", "access token for a private config repo")
+	pf.StringVar(&flags.rawBase, "raw-base", "", "raw base URL template with {ref} and {path} placeholders")
+	pf.StringVar(&flags.configDir, "config-dir", "", "read config from a local directory instead of a repo")
+	_ = pf.MarkHidden("config-dir")
 
-	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(
+		newVersionCmd(),
+		newValidateCmd(),
+		newPlanCmd(),
+	)
 	return cmd
 }
 
