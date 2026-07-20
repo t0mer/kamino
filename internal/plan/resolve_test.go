@@ -132,6 +132,57 @@ func TestSelectSkipsItemsForOtherArch(t *testing.T) {
 	assert.Equal(t, []string{"c/b"}, got.Refs)
 }
 
+func TestSelectDependencyForOtherArchIsAnError(t *testing.T) {
+	r := &manifest.Resolved{Categories: []manifest.Category{{
+		ID: "c", Name: "C",
+		Items: []manifest.Item{
+			{ID: "a", Name: "A", Type: manifest.ItemApt, CategoryID: "c", Arch: []string{"amd64"}, DependsOn: []string{"c/b"}},
+			{ID: "b", Name: "B", Type: manifest.ItemApt, CategoryID: "c", Arch: []string{"arm64"}},
+		},
+	}}}
+
+	_, err := plan.Select(r, manifest.Profile{ID: "x", Include: []string{"c/a"}}, "amd64")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "c/a")
+	assert.Contains(t, err.Error(), "c/b")
+	assert.Contains(t, err.Error(), "amd64")
+}
+
+func TestSelectTransitiveDependencyForOtherArchIsAnError(t *testing.T) {
+	r := &manifest.Resolved{Categories: []manifest.Category{{
+		ID: "c", Name: "C",
+		Items: []manifest.Item{
+			{ID: "a", Name: "A", Type: manifest.ItemApt, CategoryID: "c", DependsOn: []string{"c/b"}},
+			{ID: "b", Name: "B", Type: manifest.ItemApt, CategoryID: "c", DependsOn: []string{"c/d"}},
+			{ID: "d", Name: "D", Type: manifest.ItemApt, CategoryID: "c", Arch: []string{"arm64"}},
+		},
+	}}}
+
+	_, err := plan.Select(r, manifest.Profile{ID: "x", Include: []string{"c/a"}}, "amd64")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "c/b")
+	assert.Contains(t, err.Error(), "c/d")
+	assert.Contains(t, err.Error(), "amd64")
+}
+
+func TestSelectAddsArchCompatibleDependency(t *testing.T) {
+	r := &manifest.Resolved{Categories: []manifest.Category{{
+		ID: "c", Name: "C",
+		Items: []manifest.Item{
+			{ID: "a", Name: "A", Type: manifest.ItemApt, CategoryID: "c", DependsOn: []string{"c/b"}},
+			{ID: "b", Name: "B", Type: manifest.ItemApt, CategoryID: "c", Arch: []string{"amd64"}},
+		},
+	}}}
+
+	got, err := plan.Select(r, manifest.Profile{ID: "x", Include: []string{"c/a"}}, "amd64")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"c/a", "c/b"}, got.Refs)
+	assert.True(t, got.Implicit["c/b"], "arch-compatible auto-added dependency must be marked implicit")
+}
+
 func TestSelectUnknownIncludeRefIsAnError(t *testing.T) {
 	r := loadFixture(t)
 

@@ -13,7 +13,14 @@ import (
 // Missing dependencies are pulled in automatically and marked implicit, so
 // profiles stay terse. But a dependency the profile explicitly excluded is a
 // hard error: an exclude is a deliberate statement by the operator, and
-// silently overriding it would be a surprise at root privileges.
+// silently overriding it would be a surprise at root privileges. Likewise, a
+// dependency (direct or transitive) that does not support the target arch is
+// a hard error rather than being silently dropped or silently included: the
+// depending item cannot be installed without it.
+//
+// If a ref matches both an include and an exclude pattern, the exclude wins
+// silently. A profile with no include patterns at all yields an empty
+// selection and no error.
 func Select(r *manifest.Resolved, p manifest.Profile, arch string) (Selection, error) {
 	index := map[string]manifest.Item{}
 	var order []string
@@ -65,8 +72,15 @@ func Select(r *manifest.Resolved, p manifest.Profile, arch string) (Selection, e
 						"remove the exclude or drop %q from the profile",
 					ref, dep, p.ID, ref)
 			}
-			if _, ok := index[dep]; !ok {
+			depItem, ok := index[dep]
+			if !ok {
 				return Selection{}, fmt.Errorf("item %q depends on unknown item %q", ref, dep)
+			}
+			if !depItem.SupportsArch(arch) {
+				return Selection{}, fmt.Errorf(
+					"item %q depends on %q, which does not support arch %q: "+
+						"remove %q from the profile or drop the dependency",
+					ref, dep, arch, ref)
 			}
 			selected[dep] = true
 			implicit[dep] = true
