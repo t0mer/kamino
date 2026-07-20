@@ -141,15 +141,25 @@ func readLine(br *bufio.Reader) (line string, truncated bool, err error) {
 	var buf []byte
 	for {
 		chunk, e := br.ReadSlice('\n')
+
+		// Exclude the delimiter from the cap accounting. Counting it would
+		// mark a line whose content lands exactly on the cap as truncated,
+		// even though the only byte dropped is the newline that dropNewline
+		// would have stripped anyway.
+		content := chunk
+		if e == nil {
+			content = chunk[:len(chunk)-1]
+		}
+
 		if room := maxLineBytes - len(buf); room > 0 {
-			if room > len(chunk) {
-				room = len(chunk)
+			if room > len(content) {
+				room = len(content)
 			}
-			buf = append(buf, chunk[:room]...)
-			if room < len(chunk) {
+			buf = append(buf, content[:room]...)
+			if room < len(content) {
 				truncated = true
 			}
-		} else if len(chunk) > 0 {
+		} else if len(content) > 0 {
 			truncated = true
 		}
 
