@@ -1,0 +1,4 @@
+id: compose-only
+name: Compose Only
+include:
+  - tools/docker-compose

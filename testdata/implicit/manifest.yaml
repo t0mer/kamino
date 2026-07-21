@@ -1,0 +1,6 @@
+schema: 1
+name: kamino-implicit-testdata
+categories:
+  - categories/tools.yaml
+profiles:
+  - profiles/compose-only.yaml

@@ -1,0 +1,9 @@
+id: production
+name: Production
+include:
+  - tools/*
+  - network/cloudflared
+exclude:
+  - dev/*
+overrides:
+  tools/docker: { version: "27.5" }

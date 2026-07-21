@@ -1,0 +1,16 @@
+id: network
+name: Network
+order: 30
+items:
+  - id: cloudflared
+    name: Cloudflare Tunnel
+    type: deb
+    version: "2024.8.2"
+    source:
+      amd64: "https://github.com/cloudflare/cloudflared/releases/download/{version}/cloudflared-linux-amd64.deb"
+      arm64: "https://github.com/cloudflare/cloudflared/releases/download/{version}/cloudflared-linux-arm64.deb"
+    secrets: ["CF_TUNNEL_TOKEN"]
+    post_install:
+      - "cloudflared service install {secret:CF_TUNNEL_TOKEN}"
+    check: "cloudflared --version"
+    check_contains: "{version}"

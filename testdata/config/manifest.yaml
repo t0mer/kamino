@@ -1,0 +1,13 @@
+schema: 1
+name: kamino-testdata
+defaults:
+  apt_update_before_run: true
+  timeout: 15m
+categories:
+  - categories/dev.yaml
+  - categories/tools.yaml
+  - categories/network.yaml
+profiles:
+  - profiles/production.yaml
+  - profiles/dev.yaml
+  - profiles/test.yaml

@@ -1,0 +1,18 @@
+id: tools
+name: Tools
+order: 10
+items:
+  - id: docker
+    name: Docker Engine
+    type: script
+    source: "https://get.docker.com"
+    check: "docker --version"
+    check_contains: "Docker version"
+
+  - id: docker-compose
+    name: Docker Compose plugin
+    type: apt
+    packages: ["docker-compose-plugin"]
+    depends_on: ["tools/docker"]
+    check: "docker compose version"
+    check_contains: "Docker Compose version"

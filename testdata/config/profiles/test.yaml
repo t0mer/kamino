@@ -1,0 +1,4 @@
+id: test
+name: Test
+include:
+  - tools/jq

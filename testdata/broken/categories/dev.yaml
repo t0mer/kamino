@@ -1,0 +1,9 @@
+id: dev
+name: Development
+order: 10
+items:
+  - id: pypi-base
+    name: Base PyPI packages
+    type: pip
+    packages: ["loguru"]
+    depends_on: ["dev/nonexistent"]
