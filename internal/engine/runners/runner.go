@@ -10,7 +10,6 @@ package runners
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -90,26 +89,4 @@ func CheckProbe(ctx context.Context, d Deps, it ResolvedItem) (bool, error) {
 		return true, nil
 	}
 	return strings.Contains(strings.Join(res.Output(), "\n"), it.CheckContains), nil
-}
-
-// run executes a shell line on behalf of it and turns a non-zero exit into
-// an error carrying the command's output, so a failure is diagnosable from
-// the error message alone. The error necessarily includes the command line
-// and its captured output; callers must not add any further detail drawn
-// from it.Source, it.Check, it.CheckContains or it.Packages, since those
-// fields may carry an expanded secret value (see internal/engine.Resolve).
-// it.Ref is always safe to include.
-func run(ctx context.Context, d Deps, it ResolvedItem, line string) error {
-	c := kexec.Shell(line)
-	c.Timeout = it.Timeout
-
-	res, err := d.Exec.Run(ctx, c, nil)
-	if err != nil {
-		return fmt.Errorf("%s: running %q: %w", it.Ref, line, err)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("%s: %q exited %d: %s",
-			it.Ref, line, res.ExitCode, strings.Join(res.Output(), "; "))
-	}
-	return nil
 }

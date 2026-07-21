@@ -82,11 +82,56 @@ func TestAptInstallRunsNonInteractiveInstall(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Len(t, fake.CommandLines(), 1)
-	line := fake.CommandLines()[0]
-	assert.Contains(t, line, "DEBIAN_FRONTEND=noninteractive")
-	assert.Contains(t, line, "apt-get install -y")
-	assert.Contains(t, line, "python3.12 python3.12-venv")
+	calls := fake.Calls()
+	require.Len(t, calls, 1)
+
+	assert.Equal(t, "apt-get", calls[0].Path)
+	assert.Equal(t, []string{"install", "-y", "--", "python3.12", "python3.12-venv"}, calls[0].Args)
+	assert.Contains(t, calls[0].Env, "DEBIAN_FRONTEND=noninteractive",
+		"carried in the environment, not as a shell prefix")
+}
+
+// TestAptPackageMetacharactersAreInert pins that a typo'd package name cannot
+// become a second command. apt runs via argv, so a ";" is just an odd package
+// name that apt will fail to find.
+func TestAptPackageMetacharactersAreInert(t *testing.T) {
+	d, fake := deps(t)
+
+	err := runners.NewApt(d).Install(context.Background(), runners.ResolvedItem{
+		Ref:      "tools/odd",
+		Packages: []string{"jq; touch pwned", "`id`", "$(whoami)"},
+	})
+
+	require.NoError(t, err)
+	calls := fake.Calls()
+	require.Len(t, calls, 1, "no extra command may be executed")
+	assert.Equal(t, []string{"install", "-y", "--", "jq; touch pwned", "`id`", "$(whoami)"}, calls[0].Args)
+	assert.NotEqual(t, "/bin/sh", calls[0].Path)
+}
+
+// TestAptLeadingDashPackageIsNotAFlag pins the "--" separator: without it, a
+// package name starting with "-" would be parsed by apt-get as a flag.
+func TestAptLeadingDashPackageIsNotAFlag(t *testing.T) {
+	d, fake := deps(t)
+
+	err := runners.NewApt(d).Install(context.Background(), runners.ResolvedItem{
+		Ref: "tools/odd", Packages: []string{"--reinstall"},
+	})
+
+	require.NoError(t, err)
+	args := fake.Calls()[0].Args
+	require.Contains(t, args, "--")
+	assert.Less(t, indexOfArg(args, "--"), indexOfArg(args, "--reinstall"),
+		"the separator must precede the package list")
+}
+
+func indexOfArg(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestAptInstallAddsRepoFirst(t *testing.T) {
