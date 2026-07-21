@@ -120,7 +120,20 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 		summary.Steps = append(summary.Steps, result)
 		e.sink.StepStatus(runID, stepID, result.Status)
 
-		if result.Status == state.StatusFailed {
+		// A step that timed out or was cancelled mid-install is just as
+		// unusable to its dependents as one that failed outright — its
+		// install never completed, so anything depending on it cannot be
+		// trusted to proceed. Give it the same halt/blocked treatment as
+		// StatusFailed. The run-level status is reported as StatusFailed
+		// (not StatusCancelled) here: StatusCancelled at the run level is
+		// reserved for the run's own context being cancelled/timed out
+		// (handled separately, above and below), which means an operator or
+		// caller stopped the run itself. A single step's install deadline
+		// expiring is a failure of that step, not a cancellation of the run —
+		// the run kept going per its continue-on-error policy. If the run's
+		// own context is ALSO cancelled, the check after the loop below
+		// upgrades this back to StatusCancelled.
+		if result.Status == state.StatusFailed || result.Status == state.StatusCancelled {
 			summary.Status = state.StatusFailed
 			blocked[step.Ref] = true
 			if !e.opts.ContinueOnError {

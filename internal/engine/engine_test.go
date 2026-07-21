@@ -285,6 +285,51 @@ func TestRunPreInstallExitCodeReachesStepResult(t *testing.T) {
 	assert.Equal(t, 17, got.Steps[0].ExitCode)
 }
 
+// TestRunStepTimeoutHaltsAndBlocksWhenNotContinuing pins Finding 2: a step
+// whose Install call ends with context.DeadlineExceeded is reported
+// StatusCancelled, but that must not be treated as harmless. With
+// continue-on-error false, it must halt the run (like a StatusFailed step
+// does) and its dependent must never run.
+func TestRunStepTimeoutHaltsAndBlocksWhenNotContinuing(t *testing.T) {
+	var installs []string
+	eng := newEngine(t, kexec.NewFakeExecutor(),
+		stubRunner{installErr: context.DeadlineExceeded, installs: &installs},
+		&recordingSink{}, engine.Options{})
+
+	p := testPlan(aptItem("a"), aptItem("b", "c/a"))
+	got, err := eng.Run(context.Background(), p, "run-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, state.StatusCancelled, got.Steps[0].Status, "a's own install timed out")
+	assert.Equal(t, state.StatusBlocked, got.Steps[1].Status,
+		"b depends on a, whose install never completed, so it must not run")
+	assert.Equal(t, []string{"c/a"}, installs, "b's Install must never be called")
+	assert.NotEqual(t, state.StatusSuccess, got.Status,
+		"a run containing a cancelled step must never report overall success")
+}
+
+// TestRunStepTimeoutBlocksOnlyDependentsWhenContinuing is
+// TestRunStepTimeoutHaltsAndBlocksWhenNotContinuing's continue-on-error
+// counterpart: an unrelated step must still run, but the dependent of the
+// timed-out step must be blocked, and the run must still not report success.
+func TestRunStepTimeoutBlocksOnlyDependentsWhenContinuing(t *testing.T) {
+	eng := newEngine(t, kexec.NewFakeExecutor(),
+		stubRunner{installErr: context.DeadlineExceeded},
+		&recordingSink{}, engine.Options{ContinueOnError: true})
+
+	// b depends on a; c is unrelated.
+	p := testPlan(aptItem("a"), aptItem("b", "c/a"), aptItem("c"))
+	got, err := eng.Run(context.Background(), p, "run-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, state.StatusCancelled, got.Steps[0].Status, "a timed out")
+	assert.Equal(t, state.StatusBlocked, got.Steps[1].Status, "b depends on a")
+	assert.Equal(t, state.StatusCancelled, got.Steps[2].Status,
+		"c is unrelated and still attempted (and also times out, per the stub)")
+	assert.NotEqual(t, state.StatusSuccess, got.Status,
+		"a run containing a cancelled step must never report overall success")
+}
+
 func TestRunPreAndPostInstallCommands(t *testing.T) {
 	fake := kexec.NewFakeExecutor()
 	it := aptItem("a")
