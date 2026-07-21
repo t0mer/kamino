@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -74,49 +73,46 @@ func (s *Script) Install(ctx context.Context, it ResolvedItem) error {
 		if err != nil {
 			return fmt.Errorf("%s: fetching %s: %w", it.Ref, it.Source, err)
 		}
-		// 0o700 (owner-only) for the write itself: root is the only reader
-		// or writer of this file until the chmod below deliberately widens
-		// it to 0755 for execution, so there is no window in which another
-		// local user could read or tamper with a script that is about to
-		// run as root.
+		// 0o700, and left that way: `sh <file>` reads the script, it does not
+		// need the execute bit, so widening the mode would only open a window
+		// in a shared temp dir for another local user to tamper with a file
+		// that is about to run as root.
 		if err := os.WriteFile(local, body, 0o700); err != nil {
 			return fmt.Errorf("%s: writing script to disk: %w", it.Ref, err)
 		}
 	}
 
-	if err := runArgv(ctx, s.d, it, "/bin/chmod", "0755", local); err != nil {
-		return err
-	}
 	return runArgv(ctx, s.d, it, "/bin/sh", local)
 }
 
 // safeScriptTarget resolves where a script is materialised inside
-// Deps.TempDir, keyed off the base name of it.Source.
+// Deps.TempDir.
 //
-// A crafted config repo source such as "scripts/../../etc/cron.d/evil"
-// already collapses to the harmless base name "evil" via path.Base — the
-// config repo is trusted by design (CLAUDE.md §7), and an operator who
-// points Kamino at a malicious repo has already lost via type: script, so
+// The config repo is trusted by design (CLAUDE.md §7) — an operator who
+// points Kamino at a malicious repo has already lost via type: script — so
 // this is not a defense against that trust boundary. It is a cheap
-// containment guard against the base name resolving to something other
-// than a plain file inside TempDir (an empty source, or one whose base name
-// is "." or ".." or "/"), in the same spirit as safeInstallTarget and
+// containment guard in the same spirit as safeInstallTarget and
 // safeBinaryTarget (tarball.go, binary.go): reject a mistaken *path*, not a
-// malicious *command* — the file this returns is later passed to /bin/chmod
-// and /bin/sh via runArgv, never through /bin/sh -c, so whatever the path
-// contains reaches the OS as one argv element, not a second command.
+// malicious *command*. The file this returns is later passed to /bin/sh via
+// runArgv, never through /bin/sh -c, so whatever the path contains reaches
+// the OS as one argv element rather than a second command.
 //
-// The error deliberately omits it.Source: a base name derived from it can,
-// in principle, carry a secret Resolve expanded into Source (see Install's
-// comment), so nothing derived from it is safe to put in an error message.
+// The name comes from the item's ref, never from it.Source. Resolve expands
+// {secret:NAME} into Source, so an https source carrying a token in its query
+// string would otherwise bake that token into the on-disk filename and into
+// the argv of the commands run against it — where it is visible in ps and
+// /proc/<pid>/cmdline. Redaction cannot reach either of those. The ref is
+// built from category and item ids, which are never templated, and it is
+// unique per item, so it also cannot collide within a run. This matches how
+// tarball.go and binary.go name their artifacts.
 func safeScriptTarget(tempDir string, it ResolvedItem) (string, error) {
-	base := path.Base(it.Source)
-	if base == "" || base == "." || base == ".." || base == "/" {
-		return "", fmt.Errorf("%s: refusing to materialise script: source resolves to an unsafe file name", it.Ref)
+	name := itemName(it)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("%s: refusing to materialise script: item id is not a usable file name", it.Ref)
 	}
 
 	clean := filepath.Clean(tempDir)
-	target := filepath.Join(clean, base)
+	target := filepath.Join(clean, name+".sh")
 	if filepath.Dir(target) != clean {
 		return "", fmt.Errorf("%s: refusing to materialise script outside the run temp dir", it.Ref)
 	}

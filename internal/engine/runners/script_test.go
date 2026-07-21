@@ -46,7 +46,6 @@ func TestScriptDownloadsRemoteURL(t *testing.T) {
 	assert.Empty(t, src.fetched, "an https source comes from the network, not the config repo")
 
 	joined := strings.Join(fake.CommandLines(), "\n")
-	assert.Contains(t, joined, "chmod 0755")
 	assert.Contains(t, joined, "/bin/sh")
 }
 
@@ -127,14 +126,44 @@ func TestScriptCheckDelegatesToProbe(t *testing.T) {
 	assert.True(t, got)
 }
 
-func TestScriptRejectsUnsafeSourceFileName(t *testing.T) {
+func TestScriptRejectsUnusableItemName(t *testing.T) {
 	d, _, _ := depsWithDownloader(t)
 	src := &fakeSource{files: map[string]string{}}
 
 	err := runners.NewScript(d, src, "abc123").Install(context.Background(), runners.ResolvedItem{
-		Ref: "tools/evil", Source: "scripts/../..",
+		Ref: "tools/..", Source: "scripts/hello.sh",
 	})
 
 	require.Error(t, err)
 	assert.Empty(t, src.fetched, "an unsafe target must be rejected before ever fetching the content")
+}
+
+// TestScriptNameComesFromRefNotSource pins that the materialised file is named
+// after the item, not after the source URL.
+//
+// Resolve expands {secret:NAME} into Source, so an https source with a token in
+// its query string would otherwise put that token in the on-disk filename and
+// in the argv of the command run against it — where ps and /proc/<pid>/cmdline
+// expose it and redaction cannot reach.
+func TestScriptNameComesFromRefNotSource(t *testing.T) {
+	d, fake, dl := depsWithDownloader(t)
+	src := &fakeSource{files: map[string]string{}}
+
+	err := runners.NewScript(d, src, "abc123").Install(context.Background(), runners.ResolvedItem{
+		Ref:    "tools/docker",
+		Source: "https://get.docker.com/install.sh?token=sup3rs3cret",
+	})
+
+	require.NoError(t, err)
+
+	calls := fake.Calls()
+	require.Len(t, calls, 1, "only the script invocation should run")
+	for _, arg := range calls[0].Args {
+		assert.NotContains(t, arg, "sup3rs3cret",
+			"the secret must not reach the argv, where ps and /proc expose it")
+	}
+	assert.Equal(t, filepath.Join(d.TempDir, "docker.sh"), calls[0].Args[0])
+
+	// The URL itself still has to reach the downloader — that is the request.
+	assert.Equal(t, []string{"https://get.docker.com/install.sh?token=sup3rs3cret"}, dl.Requests())
 }
