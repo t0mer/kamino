@@ -26,7 +26,17 @@ func RequireToken(token string) func(http.Handler) http.Handler {
 	want := []byte(token)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			got := []byte(r.Header.Get(TokenHeader))
+			// Exactly one header, or nothing. Header.Get would silently take
+			// the first of several, so a reverse proxy appending its own token
+			// alongside a caller's would authenticate on whichever landed
+			// first. An ambiguous credential is not a credential.
+			values := r.Header.Values(TokenHeader)
+			if len(values) != 1 {
+				writeError(w, http.StatusUnauthorized, "invalid or missing API token")
+				return
+			}
+
+			got := []byte(values[0])
 			if len(want) == 0 || subtle.ConstantTimeCompare(got, want) != 1 {
 				writeError(w, http.StatusUnauthorized, "invalid or missing API token")
 				return

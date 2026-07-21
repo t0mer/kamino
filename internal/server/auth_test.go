@@ -82,3 +82,29 @@ func TestRequireTokenFailsClosedWhenConfiguredTokenIsEmpty(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+func TestRequireTokenRejectsDuplicateHeaders(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+	}{
+		{"valid then wrong", []string{"s3cret", "wrong"}},
+		{"wrong then valid", []string{"wrong", "s3cret"}},
+		{"valid twice", []string{"s3cret", "s3cret"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/system", nil)
+			for _, v := range tc.values {
+				req.Header.Add(server.TokenHeader, v)
+			}
+			rec := httptest.NewRecorder()
+
+			protected(t, "s3cret").ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code,
+				"an ambiguous credential must not authenticate")
+		})
+	}
+}
