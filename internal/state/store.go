@@ -4,6 +4,7 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -94,8 +95,24 @@ func Open(path string) (*Store, error) {
 // newConn opens, not just the first) rather than a plain "PRAGMA foreign_keys
 // = ON" exec, which only ever reaches whichever single connection happens to
 // service that call.
+//
+// The path is percent-encoded into a file: URI rather than concatenated. The
+// driver splits a DSN on its first "?", so a data dir containing that byte
+// would otherwise both truncate the filename and silently drop the pragma —
+// leaving Prune's ON DELETE CASCADE quietly inoperative.
 func dsn(path string) string {
-	return path + "?_pragma=foreign_keys(1)"
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		// Fall back to the path as given: a relative DSN still opens the right
+		// file, and Open surfaces any genuine problem with it.
+		abs = path
+	}
+	u := url.URL{
+		Scheme:   "file",
+		Path:     abs,
+		RawQuery: url.Values{"_pragma": {"foreign_keys(1)"}}.Encode(),
+	}
+	return u.String()
 }
 
 // Close releases the database.
