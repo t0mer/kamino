@@ -172,9 +172,10 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 	}
 
 	for _, line := range item.PreInstall {
-		if _, err := e.runShell(ctx, runID, stepID, line, r, item.Timeout); err != nil {
-			return StepResult{Ref: step.Ref, Status: state.StatusFailed,
-				Err: fmt.Errorf("pre_install %q: %w", line, err)}
+		res, err := e.runShell(ctx, runID, stepID, line, r, item.Timeout)
+		if err != nil {
+			return StepResult{Ref: step.Ref, Status: state.StatusFailed, ExitCode: res.ExitCode,
+				Err: fmt.Errorf("pre_install %q: %w", r.Redact(line), err)}
 		}
 	}
 
@@ -187,9 +188,10 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 	}
 
 	for _, line := range item.PostInstall {
-		if _, err := e.runShell(ctx, runID, stepID, line, r, item.Timeout); err != nil {
-			return StepResult{Ref: step.Ref, Status: state.StatusFailed,
-				Err: fmt.Errorf("post_install %q: %w", line, err)}
+		res, err := e.runShell(ctx, runID, stepID, line, r, item.Timeout)
+		if err != nil {
+			return StepResult{Ref: step.Ref, Status: state.StatusFailed, ExitCode: res.ExitCode,
+				Err: fmt.Errorf("post_install %q: %w", r.Redact(line), err)}
 		}
 	}
 

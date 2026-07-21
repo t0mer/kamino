@@ -218,6 +218,73 @@ func TestRunUnknownItemTypeFailsTheStep(t *testing.T) {
 	require.Error(t, got.Steps[0].Err)
 }
 
+// TestRunPreInstallErrorNeverLeaksSecret pins Finding 1: a failing
+// pre_install line is templated with the real secret value before it runs,
+// so the error built around it must redact that value. Before the fix,
+// StepResult.Err.Error() embedded the plaintext secret via the raw command
+// line in its %q wrap, even though runShell's own error text was already
+// redacted.
+func TestRunPreInstallErrorNeverLeaksSecret(t *testing.T) {
+	store := secrets.New()
+	store.Set("TOKEN", "sup3rs3cret")
+
+	fake := kexec.NewFakeExecutor()
+	fake.Script("cloudflared service install", kexec.Result{ExitCode: 1, Stdout: []string{"boom"}})
+
+	it := aptItem("a")
+	it.PreInstall = []string{"cloudflared service install {secret:TOKEN}"}
+
+	eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{Secrets: store})
+	got, err := eng.Run(context.Background(), testPlan(it), "run-1")
+
+	require.NoError(t, err)
+	require.Error(t, got.Steps[0].Err)
+	assert.NotContains(t, got.Steps[0].Err.Error(), "sup3rs3cret",
+		"a failing pre_install error must never contain the plaintext secret")
+	assert.Equal(t, state.StatusFailed, got.Steps[0].Status)
+}
+
+// TestRunPostInstallErrorNeverLeaksSecret is TestRunPreInstallErrorNeverLeaksSecret's
+// counterpart for post_install, the other error path the reviewer named.
+func TestRunPostInstallErrorNeverLeaksSecret(t *testing.T) {
+	store := secrets.New()
+	store.Set("TOKEN", "sup3rs3cret")
+
+	fake := kexec.NewFakeExecutor()
+	fake.Script("cloudflared service install", kexec.Result{ExitCode: 1, Stdout: []string{"boom"}})
+
+	it := aptItem("a")
+	it.PostInstall = []string{"cloudflared service install {secret:TOKEN}"}
+
+	eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{Secrets: store})
+	got, err := eng.Run(context.Background(), testPlan(it), "run-1")
+
+	require.NoError(t, err)
+	require.Error(t, got.Steps[0].Err)
+	assert.NotContains(t, got.Steps[0].Err.Error(), "sup3rs3cret",
+		"a failing post_install error must never contain the plaintext secret")
+	assert.Equal(t, state.StatusFailed, got.Steps[0].Status)
+}
+
+// TestRunPreInstallExitCodeReachesStepResult pins Finding 3: a non-zero exit
+// from a pre_install command is known (runShell captured it from
+// exec.Result) and must be carried through to StepResult.ExitCode rather
+// than left at its zero value.
+func TestRunPreInstallExitCodeReachesStepResult(t *testing.T) {
+	fake := kexec.NewFakeExecutor()
+	fake.Script("false-ish", kexec.Result{ExitCode: 17})
+
+	it := aptItem("a")
+	it.PreInstall = []string{"false-ish"}
+
+	eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{})
+	got, err := eng.Run(context.Background(), testPlan(it), "run-1")
+
+	require.NoError(t, err)
+	require.Error(t, got.Steps[0].Err)
+	assert.Equal(t, 17, got.Steps[0].ExitCode)
+}
+
 func TestRunPreAndPostInstallCommands(t *testing.T) {
 	fake := kexec.NewFakeExecutor()
 	it := aptItem("a")
