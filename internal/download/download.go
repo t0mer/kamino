@@ -18,10 +18,24 @@ import (
 // ErrChecksumMismatch reports that a download did not match its declared sha256.
 var ErrChecksumMismatch = errors.New("sha256 mismatch")
 
+// ErrTooLarge reports that a downloaded artifact exceeded the size limit
+// this downloader enforces.
+var ErrTooLarge = errors.New("artifact too large")
+
 // maxRedirects mirrors net/http's default redirect cap (10). Installing a
 // custom CheckRedirect disables that built-in default, so it must be
 // re-enforced explicitly whenever the caller hasn't supplied their own policy.
 const maxRedirects = 10
+
+// maxArtifactSize caps how many bytes HTTPDownloader will stream to disk for
+// a single artifact. These are real .deb packages, tarballs and binaries —
+// unlike the config-repo YAML capped in internal/remote, a legitimate
+// artifact can genuinely be hundreds of MB (a full toolchain tarball, a
+// browser .deb). 2 GiB comfortably covers the largest realistic installer
+// artifact this tool downloads while still bounding how much disk a
+// malicious or misbehaving source can force a root-running process to write
+// before an explicit error stops it.
+const maxArtifactSize = 2 << 30 // 2 GiB
 
 // Downloader fetches a remote artifact to a local path, verifying it when a
 // checksum is declared.
@@ -31,7 +45,8 @@ type Downloader interface {
 
 // HTTPDownloader downloads over HTTPS.
 type HTTPDownloader struct {
-	client *http.Client
+	client  *http.Client
+	maxSize int64
 }
 
 // NewHTTPDownloader builds a downloader. A nil client uses a 10 minute
@@ -54,7 +69,7 @@ func NewHTTPDownloader(client *http.Client) *HTTPDownloader {
 	}
 	guarded := *client
 	guarded.CheckRedirect = redirectHTTPSGuard(client.CheckRedirect)
-	return &HTTPDownloader{client: &guarded}
+	return &HTTPDownloader{client: &guarded, maxSize: maxArtifactSize}
 }
 
 // redirectHTTPSGuard builds a CheckRedirect function that fails any redirect
@@ -121,7 +136,13 @@ func (d *HTTPDownloader) fetch(ctx context.Context, url, dest, sha256Hex string)
 	}
 
 	hasher := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(f, hasher), resp.Body)
+	// Cap the copy at maxSize+1 bytes so an over-limit body can be told apart
+	// from one that lands exactly on the limit: io.Copy only returns fewer
+	// than maxSize+1 bytes if the body itself was shorter, so an artifact of
+	// exactly maxSize bytes is still accepted. Without this cap a hostile or
+	// misbehaving source could stream unbounded bytes to disk under a
+	// process running as root.
+	n, copyErr := io.Copy(io.MultiWriter(f, hasher), io.LimitReader(resp.Body, d.maxSize+1))
 	closeErr := f.Close()
 
 	if copyErr != nil {
@@ -131,6 +152,10 @@ func (d *HTTPDownloader) fetch(ctx context.Context, url, dest, sha256Hex string)
 	if closeErr != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("closing %s: %w", tmp, closeErr)
+	}
+	if n > d.maxSize {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("downloading %s: %w: exceeds %d byte limit", url, ErrTooLarge, d.maxSize)
 	}
 
 	if sha256Hex != "" {
