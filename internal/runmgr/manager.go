@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -58,6 +59,12 @@ type Manager struct {
 	writer   runStepWriter
 	bus      *events.Bus
 	keepRuns int
+
+	// runnerLookup, when set, replaces engine.NewRegistry for the run. It
+	// exists solely so tests in this package can inject a runner that
+	// misbehaves (e.g. panics) without widening the public StartRequest API.
+	// Always nil in production.
+	runnerLookup engine.RunnerFor
 
 	mu     sync.Mutex
 	active string
@@ -180,6 +187,10 @@ func (m *Manager) persist(runID string, req StartRequest) (map[string]string, er
 // it.
 func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, stepIDs map[string]string) {
 	defer m.release()
+	// Registered after release so it runs first during a panic unwind: see
+	// recoverFromPanic's doc comment for why a step runner panicking must
+	// not be allowed to take the whole process down with it.
+	defer m.recoverFromPanic(runID)
 
 	tempDir, err := os.MkdirTemp("", "kamino-run-*")
 	if err != nil {
@@ -195,9 +206,14 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 		TempDir:  tempDir,
 	}
 
+	lookup := m.runnerLookup
+	if lookup == nil {
+		lookup = engine.NewRegistry(deps, req.ConfigSource, req.Plan.ConfigSHA)
+	}
+
 	eng := engine.New(
 		deps.Exec,
-		engine.NewRegistry(deps, req.ConfigSource, req.Plan.ConfigSHA),
+		lookup,
 		engine.NewMultiSink(
 			state.NewSink(m.db, stepIDs),
 			events.NewSink(m.bus),
@@ -226,6 +242,32 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 	}
 
 	m.bus.Publish(events.Event{Type: events.EventRun, RunID: runID, Status: string(status)})
+}
+
+// recoverFromPanic stops a panic inside execute (most likely from a step
+// runner) from propagating out of the goroutine and crashing the whole
+// process — which, unlike a leaked run slot, would take the HTTP server and
+// every SSE subscriber down with it. It must be deferred directly in
+// execute, since recover only has an effect when called by a function
+// invoked directly via defer.
+//
+// On recovery: the panic value and a stack trace are logged at error level
+// (never a captured secret — panic values here are Go programming errors,
+// not step output, which is redacted before it ever reaches a sink), the run
+// is marked failed, and a terminal run event is published so a client
+// watching over SSE is not left waiting forever for a run that will never
+// report completion. The deferred call to release still runs afterwards, so
+// the slot is freed exactly as it is on any other exit from execute.
+func (m *Manager) recoverFromPanic(runID string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	slog.Error("run panicked", "run_id", runID, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+	if err := m.db.FinishRun(runID, state.StatusFailed, time.Now().UTC()); err != nil {
+		slog.Warn("recording run completion after panic failed", "run_id", runID, "error", err)
+	}
+	m.bus.Publish(events.Event{Type: events.EventRun, RunID: runID, Status: string(state.StatusFailed)})
 }
 
 // release frees the run slot. It runs from a defer, so it must not panic even
