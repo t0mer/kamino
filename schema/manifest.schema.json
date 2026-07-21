@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/t0mer/kamino/schema/manifest.schema.json",
+  "title": "Kamino manifest",
+  "type": "object",
+  "required": ["schema", "name", "categories"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "name": { "type": "string" },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apt_update_before_run": { "type": "boolean" },
+        "timeout": { "type": "string", "pattern": "^[0-9]+[smh]$" }
+      }
+    },
+    "categories": { "type": "array", "items": { "type": "string" } },
+    "profiles": { "type": "array", "items": { "type": "string" } }
+  }
+}
