@@ -17,6 +17,8 @@ var debianFrontendEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 // Deb installs a downloaded .deb package.
 type Deb struct{ d Deps }
 
+var _ Runner = (*Deb)(nil)
+
 // NewDeb builds a deb runner.
 func NewDeb(d Deps) *Deb { return &Deb{d: d} }
 

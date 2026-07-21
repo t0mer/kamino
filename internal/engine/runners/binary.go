@@ -13,6 +13,8 @@ const DefaultBinDir = "/usr/local/bin"
 // Binary installs a single downloaded executable.
 type Binary struct{ d Deps }
 
+var _ Runner = (*Binary)(nil)
+
 // NewBinary builds a binary runner.
 func NewBinary(d Deps) *Binary { return &Binary{d: d} }
 

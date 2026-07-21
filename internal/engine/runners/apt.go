@@ -8,6 +8,8 @@ import (
 // Apt installs Debian packages with apt-get.
 type Apt struct{ d Deps }
 
+var _ Runner = (*Apt)(nil)
+
 // NewApt builds an apt runner.
 func NewApt(d Deps) *Apt { return &Apt{d: d} }
 

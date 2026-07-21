@@ -8,6 +8,8 @@ import (
 // Pip installs Python packages system-wide.
 type Pip struct{ d Deps }
 
+var _ Runner = (*Pip)(nil)
+
 // NewPip builds a pip runner.
 func NewPip(d Deps) *Pip { return &Pip{d: d} }
 

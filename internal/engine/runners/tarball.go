@@ -15,6 +15,8 @@ const DefaultInstallDir = "/usr/local"
 // Tarball installs a .tar.gz archive by extracting it into an install dir.
 type Tarball struct{ d Deps }
 
+var _ Runner = (*Tarball)(nil)
+
 // NewTarball builds a tarball runner.
 func NewTarball(d Deps) *Tarball { return &Tarball{d: d} }
 
