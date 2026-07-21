@@ -47,6 +47,7 @@ func newRootCmd() *cobra.Command {
 		newVersionCmd(),
 		newValidateCmd(),
 		newPlanCmd(),
+		newApplyCmd(),
 	)
 	return cmd
 }

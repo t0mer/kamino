@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/t0mer/kamino/internal/config"
+	"github.com/t0mer/kamino/internal/engine/runners"
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/remote"
 )
@@ -81,4 +82,53 @@ func findProfile(r *manifest.Resolved, id string) (manifest.Profile, error) {
 		available = append(available, p.ID)
 	}
 	return manifest.Profile{}, fmt.Errorf("profile %q not found; available: %v", id, available)
+}
+
+// configSource returns a fetcher the script runner can use to pull scripts
+// lazily from the config repo, honouring --config-dir for local development.
+//
+// The ref passed to Fetch at call time (built.ConfigSHA, pinned once at plan
+// time by loadConfig) always wins over anything resolved here, so a fresh
+// HTTPFetcher with its own Repo.Ref is safe to build independently: it never
+// causes a script step to read a different commit than the rest of the plan.
+//
+// Any failure to resolve settings here returns a source that fails closed
+// (every Fetch call errors) rather than falling back to dirFetcher with an
+// empty root. That fallback would resolve a repo-relative script path (e.g.
+// "scripts/x.sh") against the process's current working directory instead of
+// the pinned config repo — silently executing whatever unrelated file
+// happens to sit at that relative path, as root. --config-dir is the only
+// case where reading from a local directory is intentional, and it is
+// handled above before any of these fallible calls run.
+func configSource(_ context.Context) runners.ScriptSource {
+	if flags.configDir != "" {
+		return dirFetcher{root: flags.configDir}
+	}
+
+	saved, err := config.Load(flags.dataDir)
+	if err != nil {
+		return errSource{err: fmt.Errorf("loading settings: %w", err)}
+	}
+	settings := config.Resolve(saved, config.Overrides{
+		RepoURL:         flags.repo,
+		Ref:             flags.ref,
+		Token:           flags.token,
+		RawBaseTemplate: flags.rawBase,
+	})
+	repo, err := remote.ParseRepo(settings.RepoURL, settings.Ref, settings.RawBaseTemplate)
+	if err != nil {
+		return errSource{err: fmt.Errorf("resolving config repo: %w", err)}
+	}
+	repo.Token = settings.Token
+	return remote.NewHTTPFetcher(repo, filepath.Join(flags.dataDir, "cache"), nil)
+}
+
+// errSource is a runners.ScriptSource that always fails. configSource
+// returns it when settings cannot be resolved, so a script step fails loudly
+// with a clear error instead of silently reading from an unintended location.
+type errSource struct{ err error }
+
+// Fetch always returns the wrapped error.
+func (e errSource) Fetch(context.Context, string, string) ([]byte, error) {
+	return nil, e.err
 }
