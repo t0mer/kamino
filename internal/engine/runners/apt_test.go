@@ -85,7 +85,7 @@ func TestAptInstallRunsNonInteractiveInstall(t *testing.T) {
 	calls := fake.Calls()
 	require.Len(t, calls, 1)
 
-	assert.Equal(t, "apt-get", calls[0].Path)
+	assert.Equal(t, "/usr/bin/apt-get", calls[0].Path, "the distro apt-get is invoked by absolute path, not PATH lookup")
 	assert.Equal(t, []string{"install", "-y", "--", "python3.12", "python3.12-venv"}, calls[0].Args)
 	assert.Contains(t, calls[0].Env, "DEBIAN_FRONTEND=noninteractive",
 		"carried in the environment, not as a shell prefix")

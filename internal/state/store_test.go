@@ -158,6 +158,25 @@ func TestPruneKeepsNewestRunsAndCascades(t *testing.T) {
 	assert.Empty(t, logs, "pruning a run must remove its steps and logs too")
 }
 
+// TestPruneZeroKeepsNoHistory pins the documented meaning of --keep-runs 0
+// (cmd/kamino/apply.go): it is not "unlimited" or a no-op, it means retain
+// no run history at all — Prune(0) deletes every run, immediately.
+func TestPruneZeroKeepsNoHistory(t *testing.T) {
+	s := openStore(t)
+	base := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("run-%d", i)
+		require.NoError(t, s.CreateRun(state.Run{ID: id, Status: state.StatusSuccess,
+			StartedAt: base.Add(time.Duration(i) * time.Minute)}))
+	}
+
+	require.NoError(t, s.Prune(0))
+	runs, err := s.ListRuns(10)
+
+	require.NoError(t, err)
+	assert.Empty(t, runs, "--keep-runs 0 must prune every run, not be treated as unlimited")
+}
+
 func TestGetRunUnknownIDIsAnError(t *testing.T) {
 	s := openStore(t)
 

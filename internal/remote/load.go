@@ -18,7 +18,7 @@ func Load(ctx context.Context, f Fetcher, sha string) (*manifest.Resolved, error
 	}
 	m, err := manifest.ParseManifest(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("manifest.yaml: %w", err)
 	}
 
 	out := &manifest.Resolved{

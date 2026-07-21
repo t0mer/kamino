@@ -12,6 +12,7 @@ import (
 
 func TestDebDownloadsAndInstalls(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref:    "network/cloudflared",
@@ -24,12 +25,13 @@ func TestDebDownloadsAndInstalls(t *testing.T) {
 
 	calls := fake.Calls()
 	require.NotEmpty(t, calls)
-	assert.Equal(t, "dpkg", calls[0].Path)
+	assert.Equal(t, "/usr/bin/dpkg", calls[0].Path, "the distro dpkg is invoked by absolute path, not PATH lookup")
 	assert.Equal(t, "-i", calls[0].Args[0])
 }
 
 func TestDebFixesBrokenDependencies(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "network/cloudflared", Source: "https://example.com/cloudflared.deb",
@@ -40,15 +42,16 @@ func TestDebFixesBrokenDependencies(t *testing.T) {
 	require.Len(t, calls, 2, "dpkg -i, then the apt-get fix-up pass")
 
 	dpkg := calls[0]
-	assert.Equal(t, "dpkg", dpkg.Path, "step 1 must be dpkg -i, installing the downloaded package")
+	assert.Equal(t, "/usr/bin/dpkg", dpkg.Path, "step 1 must be dpkg -i, installing the downloaded package")
 
 	fixup := calls[1]
-	assert.Equal(t, "apt-get", fixup.Path, "step 2 must be apt-get install -f -y; dpkg does not resolve dependencies")
+	assert.Equal(t, "/usr/bin/apt-get", fixup.Path, "step 2 must be apt-get install -f -y; dpkg does not resolve dependencies")
 	assert.Equal(t, []string{"install", "-f", "-y"}, fixup.Args)
 }
 
 func TestDebSetsDebianFrontendNonInteractive(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "network/cloudflared", Source: "https://example.com/cloudflared.deb",
@@ -64,7 +67,8 @@ func TestDebSetsDebianFrontendNonInteractive(t *testing.T) {
 }
 
 func TestDebInstallFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 	fake.Script("dpkg -i", kexec.Result{ExitCode: 1, Stderr: []string{"dpkg: error processing archive"}})
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
@@ -76,7 +80,8 @@ func TestDebInstallFailureIsAnError(t *testing.T) {
 }
 
 func TestDebFixupFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 	fake.Script("apt-get install -f -y", kexec.Result{ExitCode: 1, Stderr: []string{"unmet dependencies"}})
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{

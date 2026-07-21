@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -244,6 +245,81 @@ func TestFetchHonorsCallerCheckRedirect(t *testing.T) {
 	assert.NoFileExists(t, dest)
 }
 
+// TestFetchAllowsArtifactUnderSizeLimit guards against over-rejecting: an
+// artifact comfortably under the cap must still succeed and be written to
+// disk in full.
+func TestFetchAllowsArtifactUnderSizeLimit(t *testing.T) {
+	body := "short artifact"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "artifact")
+	d := download.NewHTTPDownloader(srv.Client())
+	restore := download.SetMaxSizeForTest(d, 32)
+	defer restore()
+
+	err := d.Fetch(context.Background(), srv.URL, dest, sum(body))
+
+	require.NoError(t, err)
+	got, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	assert.Equal(t, body, string(got))
+}
+
+// TestFetchAllowsArtifactExactlyAtSizeLimit asserts an artifact of exactly
+// the cap's byte count is accepted, not wrongly rejected as "over". The
+// limit-plus-one read is what makes this distinguishable from an over-limit
+// artifact.
+func TestFetchAllowsArtifactExactlyAtSizeLimit(t *testing.T) {
+	const limit = 32
+	body := strings.Repeat("b", limit)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "artifact")
+	d := download.NewHTTPDownloader(srv.Client())
+	restore := download.SetMaxSizeForTest(d, limit)
+	defer restore()
+
+	err := d.Fetch(context.Background(), srv.URL, dest, sum(body))
+
+	require.NoError(t, err)
+	got, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	assert.Equal(t, body, string(got))
+}
+
+// TestFetchRejectsArtifactOverSizeLimit asserts an artifact one byte over the
+// cap is rejected with a clear error naming the URL and the limit, and that
+// neither the destination file nor its .tmp survives — matching every other
+// failure path in Fetch, which never leaves a partial file at dest.
+func TestFetchRejectsArtifactOverSizeLimit(t *testing.T) {
+	const limit = 32
+	body := strings.Repeat("b", limit+1)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "artifact")
+	d := download.NewHTTPDownloader(srv.Client())
+	restore := download.SetMaxSizeForTest(d, limit)
+	defer restore()
+
+	err := d.Fetch(context.Background(), srv.URL, dest, "")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, download.ErrTooLarge)
+	assert.Contains(t, err.Error(), srv.URL, "error should name the offending URL")
+	assert.Contains(t, err.Error(), "32", "error should name the enforced limit")
+	assert.NoFileExists(t, dest, "an artifact that exceeded the size limit must not be left at dest")
+	assert.NoFileExists(t, dest+".tmp", "the temp file must be cleaned up when the size limit is exceeded")
+}
+
 func TestFakeDownloaderRecordsRequests(t *testing.T) {
 	d := download.NewFakeDownloader()
 	d.Content("https://example.com/go.tar.gz", "tarball bytes")
@@ -255,4 +331,21 @@ func TestFakeDownloaderRecordsRequests(t *testing.T) {
 	assert.Equal(t, []string{"https://example.com/go.tar.gz"}, d.Requests())
 	got, _ := os.ReadFile(dest)
 	assert.Equal(t, "tarball bytes", string(got))
+}
+
+// TestFakeDownloaderFailsOnUnregisteredURL asserts an URL that was never
+// programmed via Content fails loudly instead of synthesizing plausible
+// bytes. The old permissive behavior let a test that fetched the wrong URL
+// (a typo, a bad {version}/{arch} template expansion, a wrong per-arch
+// source) pass anyway, which is exactly the class of bug this fake exists to
+// catch, not hide.
+func TestFakeDownloaderFailsOnUnregisteredURL(t *testing.T) {
+	d := download.NewFakeDownloader()
+
+	dest := filepath.Join(t.TempDir(), "go.tar.gz")
+	err := d.Fetch(context.Background(), "https://example.com/unregistered.tar.gz", dest, "")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "https://example.com/unregistered.tar.gz")
+	assert.NoFileExists(t, dest)
 }

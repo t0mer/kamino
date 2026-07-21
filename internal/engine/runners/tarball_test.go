@@ -25,6 +25,7 @@ func depsWithDownloader(t *testing.T) (runners.Deps, *kexec.FakeExecutor, *downl
 
 func TestTarballDownloadsAndExtracts(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://go.dev/dl/go1.24.5.linux-amd64.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref:        "dev/go",
@@ -41,7 +42,8 @@ func TestTarballDownloadsAndExtracts(t *testing.T) {
 }
 
 func TestTarballRemovesPreviousInstall(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz", InstallDir: "/usr/local",
@@ -53,7 +55,8 @@ func TestTarballRemovesPreviousInstall(t *testing.T) {
 }
 
 func TestTarballWritesPathExport(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz",
@@ -76,7 +79,8 @@ func TestTarballWritesPathExport(t *testing.T) {
 }
 
 func TestTarballDefaultsInstallDir(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz",
@@ -96,7 +100,8 @@ func TestTarballWithoutSourceIsAnError(t *testing.T) {
 }
 
 func TestTarballExtractFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 	fake.Script("tar -C", kexec.Result{ExitCode: 2, Stderr: []string{"tar: not in gzip format"}})
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
@@ -176,7 +181,8 @@ func TestTarballRefusesPathTraversalInItemID(t *testing.T) {
 }
 
 func TestTarballAcceptsRefWithNoSlashAsWholeName(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	// A ref with no category prefix is unusual but not unsafe: itemName
 	// falls back to the whole ref, and that's a fine on-disk name.
@@ -209,7 +215,8 @@ func TestTarballItemIDMetacharactersAreInert(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, fake, _ := depsWithDownloader(t)
+			d, fake, dl := depsWithDownloader(t)
+			dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 			err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 				Ref: tc.ref, Source: "https://example.com/go.tar.gz", InstallDir: "/usr/local",
@@ -231,7 +238,8 @@ func TestTarballItemIDMetacharactersAreInert(t *testing.T) {
 }
 
 func TestTarballPathExportMetacharactersAreInert(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	evil := "/usr/local/go/bin'; rm -rf /home; echo 'pwned"
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
@@ -269,7 +277,8 @@ func TestTarballRefusesRelativeInstallDir(t *testing.T) {
 // --- Legitimate install dirs keep working ----------------------------------
 
 func TestTarballAcceptsOptInstallDir(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz", InstallDir: "/opt",
@@ -283,7 +292,8 @@ func TestTarballAcceptsOptInstallDir(t *testing.T) {
 }
 
 func TestTarballAcceptsNestedInstallDir(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz", InstallDir: "/opt/mycompany/tools",
@@ -304,7 +314,8 @@ func TestTarballAcceptsNestedInstallDir(t *testing.T) {
 // by index instead.
 
 func TestTarballInstallCommandOrder(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/go.tar.gz", "fake tarball bytes")
 
 	err := runners.NewTarball(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "dev/go", Source: "https://example.com/go.tar.gz", InstallDir: "/usr/local",

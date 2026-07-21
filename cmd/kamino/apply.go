@@ -23,8 +23,9 @@ import (
 	"github.com/t0mer/kamino/internal/sysinfo"
 )
 
-// KeepRuns is how many runs are retained in the local database.
-const KeepRuns = 50
+// DefaultKeepRuns is the --keep-runs default: how many past runs are
+// retained in the local database when the flag is not set.
+const DefaultKeepRuns = 50
 
 func newApplyCmd() *cobra.Command {
 	var (
@@ -35,6 +36,7 @@ func newApplyCmd() *cobra.Command {
 		yes             bool
 		verbose         bool
 		secretFlags     []string
+		keepRuns        int
 	)
 
 	cmd := &cobra.Command{
@@ -44,6 +46,10 @@ func newApplyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
+
+			if keepRuns < 0 {
+				return fmt.Errorf("--keep-runs must be zero or greater (got %d)", keepRuns)
+			}
 
 			// Every secret must be registered on the store before the engine is
 			// built: engine.Run snapshots the store into a redactor at the start
@@ -115,7 +121,7 @@ func newApplyCmd() *cobra.Command {
 				return fmt.Errorf("refusing to proceed without --yes")
 			}
 
-			return execute(cmd, built, resolved, store, continueOnError, verbose)
+			return execute(cmd, built, resolved, store, continueOnError, verbose, keepRuns)
 		},
 	}
 
@@ -126,6 +132,8 @@ func newApplyCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "proceed without confirmation")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "stream command output")
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "secret value as KEY=VALUE (repeatable)")
+	cmd.Flags().IntVar(&keepRuns, "keep-runs", DefaultKeepRuns,
+		"number of past runs to retain in history; 0 keeps none, pruning every run immediately after it finishes")
 	_ = cmd.MarkFlagRequired("profile")
 	return cmd
 }
@@ -168,9 +176,11 @@ func runInTempDir(fn func(tempDir string) error) (string, error) {
 	return tempDir, fn(tempDir)
 }
 
-// execute runs the plan, persisting state and streaming progress.
+// execute runs the plan, persisting state and streaming progress. keepRuns
+// is the --keep-runs retention count (validated non-negative by the caller);
+// 0 means prune every run's history down to nothing right after it finishes.
 func execute(cmd *cobra.Command, built *plan.Plan, resolved *manifest.Resolved,
-	store *secrets.Store, continueOnError, verbose bool) error {
+	store *secrets.Store, continueOnError, verbose bool, keepRuns int) error {
 
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
@@ -243,7 +253,7 @@ func execute(cmd *cobra.Command, built *plan.Plan, resolved *manifest.Resolved,
 	// provisioning run that actually succeeded — and exiting non-zero to a
 	// caller scripting against it — because we could not trim run 51 would be
 	// a far worse outcome than keeping it.
-	if err := db.Prune(KeepRuns); err != nil {
+	if err := db.Prune(keepRuns); err != nil {
 		slog.Warn("pruning old run history failed", "error", err)
 	}
 

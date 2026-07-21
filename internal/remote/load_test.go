@@ -59,6 +59,20 @@ func TestLoadDoesNotFetchScripts(t *testing.T) {
 	}
 }
 
+// TestLoadNamesManifestOnParseError asserts the manifest.yaml parse error is
+// wrapped with the file name, just like category and profile parse errors
+// already are a few lines below in load.go — an operator debugging a broken
+// config repo needs to know which file is broken without guessing.
+func TestLoadNamesManifestOnParseError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(`not: [valid: yaml`), 0o644))
+
+	_, err := remote.Load(context.Background(), &dirFetcher{root: dir}, "abc123")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest.yaml")
+}
+
 func TestLoadErrorsOnMissingCategory(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(`

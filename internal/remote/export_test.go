@@ -12,3 +12,13 @@ import "net/http"
 func RedirectAuthGuardForTest(repo *Repo, next func(req *http.Request, via []*http.Request) error) func(req *http.Request, via []*http.Request) error {
 	return redirectAuthGuard(repo, next)
 }
+
+// SetMaxConfigFileSizeForTest overrides f's config file size cap for the
+// duration of a test and returns a restore func. It exists so tests can
+// exercise the under/at/over-limit boundary with small fixture bodies
+// instead of an actual 10 MiB+ HTTP response.
+func SetMaxConfigFileSizeForTest(f *HTTPFetcher, n int64) (restore func()) {
+	orig := f.maxSize
+	f.maxSize = n
+	return func() { f.maxSize = orig }
+}

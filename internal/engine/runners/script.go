@@ -30,6 +30,8 @@ type Script struct {
 	ref string
 }
 
+var _ Runner = (*Script)(nil)
+
 // NewScript builds a script runner. ref is the config repo ref (commit SHA
 // or branch) this run is pinned to, used only for the repo-relative-path
 // branch of Install.

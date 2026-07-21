@@ -54,6 +54,26 @@ func TestApplyRejectsMalformedSecretFlag(t *testing.T) {
 	assert.Contains(t, strings.ToLower(err.Error()), "key=value")
 }
 
+// TestApplyRejectsNegativeKeepRuns pins Finding 2: --keep-runs is validated
+// before the plan touches the machine, the same way a malformed --secret is.
+func TestApplyRejectsNegativeKeepRuns(t *testing.T) {
+	_, err := runCmd(t, "apply", "--config-dir", fixtureDir(), "--profile", "test",
+		"--dry-run", "--yes", "--keep-runs", "-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keep-runs")
+}
+
+// TestApplyAcceptsZeroKeepRuns pins that 0 is a valid, meaningful value (keep
+// no history), not rejected alongside genuinely negative input.
+func TestApplyAcceptsZeroKeepRuns(t *testing.T) {
+	out, err := runCmd(t, "apply", "--config-dir", fixtureDir(), "--profile", "test",
+		"--arch", "amd64", "--dry-run", "--yes", "--keep-runs", "0")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "dry run")
+}
+
 // TestApplyRealPathSurfacesSafetyWarnings pins Finding 1: the headless apply
 // path (no --dry-run) computes the same operator-facing safety warnings
 // `validate` and `plan` show, but used to throw them away — a real

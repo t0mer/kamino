@@ -381,6 +381,68 @@ func TestFetchRejectsCachePathTraversal(t *testing.T) {
 	assert.Equal(t, "safe", string(got), "cache write must not escape the cache dir")
 }
 
+// TestFetchAllowsBodyUnderSizeLimit guards against over-rejecting: a body
+// comfortably under the cap must still succeed.
+func TestFetchAllowsBodyUnderSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("short"))
+	}))
+	defer srv.Close()
+
+	f := remote.NewHTTPFetcher(testRepo(t, srv), t.TempDir(), srv.Client())
+	restore := remote.SetMaxConfigFileSizeForTest(f, 16)
+	defer restore()
+
+	body, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, "short", string(body))
+}
+
+// TestFetchAllowsBodyExactlyAtSizeLimit asserts a body of exactly the cap's
+// byte count is accepted, not wrongly rejected as "over". The limit-plus-one
+// read is what makes this distinguishable from an over-limit body.
+func TestFetchAllowsBodyExactlyAtSizeLimit(t *testing.T) {
+	const limit = 16
+	body := strings.Repeat("a", limit)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	f := remote.NewHTTPFetcher(testRepo(t, srv), t.TempDir(), srv.Client())
+	restore := remote.SetMaxConfigFileSizeForTest(f, limit)
+	defer restore()
+
+	got, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.NoError(t, err)
+	assert.Equal(t, body, string(got))
+}
+
+// TestFetchRejectsBodyOverSizeLimit asserts a body one byte over the cap is
+// rejected with a clear error naming the file and the limit, rather than
+// being silently truncated and parsed as if it were the whole file.
+func TestFetchRejectsBodyOverSizeLimit(t *testing.T) {
+	const limit = 16
+	body := strings.Repeat("a", limit+1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	f := remote.NewHTTPFetcher(testRepo(t, srv), t.TempDir(), srv.Client())
+	restore := remote.SetMaxConfigFileSizeForTest(f, limit)
+	defer restore()
+
+	_, err := f.Fetch(context.Background(), "abc123", "manifest.yaml")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, remote.ErrTooLarge)
+	assert.Contains(t, err.Error(), "manifest.yaml", "error should name the offending file")
+	assert.Contains(t, err.Error(), "16", "error should name the enforced limit")
+}
+
 func TestFetchServerErrorWithoutCacheFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
