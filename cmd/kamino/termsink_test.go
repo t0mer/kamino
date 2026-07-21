@@ -58,7 +58,7 @@ func TestTermSinkCounterNeverExceedsTotal(t *testing.T) {
 			sink := newTermSink(&out, tc.total, map[string]string{"c/a": "A"}, false)
 
 			for _, s := range tc.statuses {
-				sink.StepStatus("run-1", "c/a", s)
+				sink.StepStatus("run-1", "c/a", s, 0)
 			}
 
 			assert.Contains(t, out.String(), tc.want)
@@ -67,15 +67,28 @@ func TestTermSinkCounterNeverExceedsTotal(t *testing.T) {
 	}
 }
 
+// TestTermSinkShowsExitCodeOnFailure pins Finding 3 at the terminal-output
+// layer: a failed step's exit code, now carried by StepStatus, must reach the
+// operator watching the terminal, not just sqlite.
+func TestTermSinkShowsExitCodeOnFailure(t *testing.T) {
+	var out bytes.Buffer
+	sink := newTermSink(&out, 1, map[string]string{"c/a": "A"}, false)
+
+	sink.StepStatus("run-1", "c/a", state.StatusRunning, 0)
+	sink.StepStatus("run-1", "c/a", state.StatusFailed, 42)
+
+	assert.Contains(t, out.String(), "exit 42")
+}
+
 func TestTermSinkCountsEachStepOfAMultiStepPlan(t *testing.T) {
 	var out bytes.Buffer
 	sink := newTermSink(&out, 3, map[string]string{"c/a": "A", "c/b": "B", "c/c": "C"}, false)
 
-	sink.StepStatus("run-1", "c/a", state.StatusRunning)
-	sink.StepStatus("run-1", "c/a", state.StatusSuccess)
-	sink.StepStatus("run-1", "c/b", state.StatusRunning)
-	sink.StepStatus("run-1", "c/b", state.StatusSkipped)
-	sink.StepStatus("run-1", "c/c", state.StatusBlocked)
+	sink.StepStatus("run-1", "c/a", state.StatusRunning, 0)
+	sink.StepStatus("run-1", "c/a", state.StatusSuccess, 0)
+	sink.StepStatus("run-1", "c/b", state.StatusRunning, 0)
+	sink.StepStatus("run-1", "c/b", state.StatusSkipped, 0)
+	sink.StepStatus("run-1", "c/c", state.StatusBlocked, 0)
 
 	got := out.String()
 	assert.Contains(t, got, "[1/3]")

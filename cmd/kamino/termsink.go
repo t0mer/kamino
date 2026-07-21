@@ -25,8 +25,11 @@ func newTermSink(out io.Writer, total int, names map[string]string, verbose bool
 	return &termSink{out: out, total: total, names: names, verbose: verbose}
 }
 
-// StepStatus prints a one-line transition per step.
-func (t *termSink) StepStatus(_, stepRef string, s state.Status) {
+// StepStatus prints a one-line transition per step. exitCode is only
+// meaningful (and only ever nonzero) for StatusFailed, where it is shown so
+// an operator watching the terminal sees what the command returned without
+// having to open the run's history afterwards.
+func (t *termSink) StepStatus(_, stepRef string, s state.Status, exitCode int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -46,7 +49,11 @@ func (t *termSink) StepStatus(_, stepRef string, s state.Status) {
 	case state.StatusSuccess:
 		fmt.Fprintf(t.out, "        %s — done\n", name)
 	case state.StatusFailed:
-		fmt.Fprintf(t.out, "        %s — FAILED\n", name)
+		if exitCode != 0 {
+			fmt.Fprintf(t.out, "        %s — FAILED (exit %d)\n", name, exitCode)
+		} else {
+			fmt.Fprintf(t.out, "        %s — FAILED\n", name)
+		}
 	case state.StatusCancelled:
 		// Like blocked, a step cancelled before it started arrives without a
 		// preceding running transition. Without a case here it printed

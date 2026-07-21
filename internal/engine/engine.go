@@ -103,7 +103,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 		stepID := step.Ref
 
 		if ctx.Err() != nil {
-			e.sink.StepStatus(runID, stepID, state.StatusCancelled)
+			e.sink.StepStatus(runID, stepID, state.StatusCancelled, 0)
 			summary.Steps = append(summary.Steps, StepResult{Ref: step.Ref, Status: state.StatusCancelled})
 			summary.Status = state.StatusCancelled
 			continue
@@ -111,14 +111,14 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 
 		if halted || e.isBlocked(step, blocked) {
 			blocked[step.Ref] = true
-			e.sink.StepStatus(runID, stepID, state.StatusBlocked)
+			e.sink.StepStatus(runID, stepID, state.StatusBlocked, 0)
 			summary.Steps = append(summary.Steps, StepResult{Ref: step.Ref, Status: state.StatusBlocked})
 			continue
 		}
 
 		result := e.runStep(ctx, runID, stepID, step, redactor)
 		summary.Steps = append(summary.Steps, result)
-		e.sink.StepStatus(runID, stepID, result.Status)
+		e.sink.StepStatus(runID, stepID, result.Status, result.ExitCode)
 
 		// A step that timed out or was cancelled mid-install is just as
 		// unusable to its dependents as one that failed outright — its
@@ -189,7 +189,7 @@ func redactErr(r *secrets.Redactor, err error) error {
 }
 
 func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.Step, r *secrets.Redactor) StepResult {
-	e.sink.StepStatus(runID, stepID, state.StatusRunning)
+	e.sink.StepStatus(runID, stepID, state.StatusRunning, 0)
 
 	item, err := Resolve(step.Item, e.opts.Arch, e.opts.Defaults, e.opts.Secrets)
 	if err != nil {
