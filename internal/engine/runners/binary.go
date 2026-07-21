@@ -33,17 +33,42 @@ func (b *Binary) Install(ctx context.Context, it ResolvedItem) error {
 	if dest == "" {
 		dest = filepath.Join(DefaultBinDir, name)
 	}
+	dest, err := safeBinaryTarget(dest)
+	if err != nil {
+		return fmt.Errorf("%s: %w", it.Ref, err)
+	}
 
 	staged := filepath.Join(b.d.TempDir, name)
 	if err := b.d.Download.Fetch(ctx, it.Source, staged, it.SHA256); err != nil {
 		return fmt.Errorf("%s: %w", it.Ref, err)
 	}
 
-	if err := run(ctx, b.d, it, fmt.Sprintf("chmod 0755 %s", staged)); err != nil {
+	if err := runArgv(ctx, b.d, it, "/bin/chmod", "0755", staged); err != nil {
 		return err
 	}
-	if err := run(ctx, b.d, it, fmt.Sprintf("mkdir -p %s", filepath.Dir(dest))); err != nil {
+	if err := runArgv(ctx, b.d, it, "/bin/mkdir", "-p", filepath.Dir(dest)); err != nil {
 		return err
 	}
-	return run(ctx, b.d, it, fmt.Sprintf("mv -f %s %s", staged, dest))
+	return runArgv(ctx, b.d, it, "/bin/mv", "-f", staged, dest)
+}
+
+// safeBinaryTarget resolves the final destination path for a binary install
+// (it.Path, or DefaultBinDir/<name> when unset — DefaultBinDir is always
+// absolute, so only an explicit it.Path can fail this) and rejects the two
+// always-invalid shapes: an empty path and a path that is not absolute.
+//
+// Like safeInstallTarget in tarball.go, this is a path sanity check only,
+// not a shell-injection defense — chmod, mkdir and mv all run as direct
+// argv commands via runArgv (see argv.go), never through /bin/sh -c, so a
+// `;`, backtick, `$(...)`, quote or space in the path is just one odd argv
+// element to those commands, never a second command.
+func safeBinaryTarget(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("refusing to use an empty binary install path")
+	}
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return "", fmt.Errorf("refusing to use %q as a binary install path: not an absolute path", path)
+	}
+	return clean, nil
 }
