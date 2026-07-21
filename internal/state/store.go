@@ -62,16 +62,23 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		return nil, fmt.Errorf("opening state db: %w", err)
 	}
 	// modernc's driver serialises poorly under concurrent writers, and Kamino
-	// only ever has one writer, so cap the pool rather than fight it. This
-	// also guarantees the PRAGMA foreign_keys = ON set below (a per-connection
-	// setting, off by default per sqlite connection) stays in effect for every
-	// later query: with at most one connection ever open, all callers reuse
-	// the very connection the schema/pragmas were applied on.
+	// only ever has one writer, so cap the pool rather than fight it. This is
+	// purely a contention/performance choice: correctness of the ON DELETE
+	// CASCADE that Prune relies on does NOT depend on it. foreign_keys is a
+	// per-connection sqlite setting (off by default on every connection,
+	// unlike journal_mode or the schema itself, which live in the database
+	// file), so it is enabled via the "_pragma" DSN parameter in dsn() below
+	// instead of a one-off PRAGMA exec. The driver (modernc.org/sqlite)
+	// re-applies every "_pragma" DSN parameter each time it opens a new
+	// physical connection, so foreign_keys stays on for any connection the
+	// pool opens later too -- whether this cap is ever raised, or the sole
+	// connection is discarded after an error and database/sql transparently
+	// opens a replacement.
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec(schemaSQL); err != nil {
@@ -79,6 +86,16 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// dsn builds the sqlite connection string for path. It sets foreign_keys via
+// the driver's "_pragma" query parameter (verified against
+// modernc.org/sqlite v1.54.0: applyQueryParams runs for every connection
+// newConn opens, not just the first) rather than a plain "PRAGMA foreign_keys
+// = ON" exec, which only ever reaches whichever single connection happens to
+// service that call.
+func dsn(path string) string {
+	return path + "?_pragma=foreign_keys(1)"
 }
 
 // Close releases the database.
@@ -106,15 +123,19 @@ func (s *Store) FinishRun(id string, status Status, at time.Time) error {
 }
 
 // CreateStep inserts a step, preserving insertion order for later reads.
+// seq is computed by a scalar subquery inside the INSERT itself, rather than
+// a preceding "SELECT COUNT(*)" round-trip: the two-statement form is not
+// atomic, so concurrent CreateStep calls for the same run can read the same
+// count before either has inserted and collide on seq. A single INSERT
+// statement (including its subquery) executes as one atomic unit of work
+// under sqlite's writer lock, so every concurrent caller's subquery is
+// guaranteed to observe the effects of every INSERT that already committed,
+// for that run_id and any other run_id interleaved with it.
 func (s *Store) CreateStep(st Step) error {
-	var seq int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM steps WHERE run_id = ?`, st.RunID).Scan(&seq); err != nil {
-		return fmt.Errorf("counting steps: %w", err)
-	}
 	_, err := s.db.Exec(
 		`INSERT INTO steps (id, run_id, seq, item_ref, name, status, started_at, exit_code)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		st.ID, st.RunID, seq, st.ItemRef, st.Name, string(st.Status), st.StartedAt, st.ExitCode)
+		 VALUES (?, ?, (SELECT COALESCE(MAX(seq), -1) + 1 FROM steps WHERE run_id = ?), ?, ?, ?, ?, ?)`,
+		st.ID, st.RunID, st.RunID, st.ItemRef, st.Name, string(st.Status), st.StartedAt, st.ExitCode)
 	if err != nil {
 		return fmt.Errorf("creating step: %w", err)
 	}

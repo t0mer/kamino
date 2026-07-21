@@ -2,6 +2,12 @@ package state
 
 // schemaSQL is applied on every Open. It is idempotent, so opening an existing
 // database is safe.
+//
+// The "PRAGMA foreign_keys = ON" below only takes effect on whichever single
+// connection executes this string, so it is defense-in-depth, not the
+// primary mechanism: the real guarantee is the "_pragma=foreign_keys(1)" DSN
+// parameter set in dsn() (see store.go), which the driver re-applies to
+// every physical connection it opens, present or future.
 const schemaSQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
