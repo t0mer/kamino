@@ -75,6 +75,7 @@ func TestStartReturnsARunID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, runID)
+	waitIdle(t, m)
 }
 
 func TestStartPersistsTheRunAndItsSteps(t *testing.T) {
@@ -89,6 +90,7 @@ func TestStartPersistsTheRunAndItsSteps(t *testing.T) {
 	assert.Equal(t, "abc123", run.ConfigSHA)
 	require.Len(t, steps, 2)
 	assert.Equal(t, "c/a", steps[0].ItemRef)
+	waitIdle(t, m)
 }
 
 func TestSecondStartWhileRunningIsRejected(t *testing.T) {
@@ -108,6 +110,7 @@ func TestSecondStartWhileRunningIsRejected(t *testing.T) {
 	active, ok := m.Active()
 	assert.True(t, ok)
 	assert.Equal(t, first, active)
+	waitIdle(t, m)
 }
 
 func TestSlotIsReleasedWhenTheRunFinishes(t *testing.T) {
@@ -123,6 +126,7 @@ func TestSlotIsReleasedWhenTheRunFinishes(t *testing.T) {
 
 	_, err = m.Start(context.Background(), request(testPlan(aptItem("b"))))
 	assert.NoError(t, err, "a new run must be startable once the slot is free")
+	waitIdle(t, m)
 }
 
 // TestRunningTheSamePlanTwiceInARowSucceeds is the end-to-end regression test
@@ -196,4 +200,5 @@ func TestStartPublishesEventsForTheRun(t *testing.T) {
 	case <-time.After(2 * time.Second):
 	}
 	<-done
+	waitIdle(t, m)
 }
