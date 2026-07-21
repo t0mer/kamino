@@ -3,6 +3,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,23 +18,35 @@ const SettingsFile = "settings.json"
 // DefaultRef is used when no ref is configured anywhere.
 const DefaultRef = "main"
 
-// Settings is the persisted configuration. It may hold a token, so the file it
-// is written to is mode 0600.
+// Settings is the persisted configuration. It holds two unrelated secrets and
+// they must never be confused: RepoToken authenticates Kamino to the operator's
+// config repo, while APIToken authenticates callers to Kamino's own HTTP API.
+// The file is mode 0600 because of both.
 type Settings struct {
-	RepoURL         string `json:"repo_url"`
-	Ref             string `json:"ref"`
-	Token           string `json:"token,omitempty"`
+	RepoURL string `json:"repo_url"`
+	Ref     string `json:"ref"`
+	// RepoToken is the operator's credential for a private config repo. Its
+	// JSON key stays "token" so settings files written before the API existed
+	// still load.
+	RepoToken string `json:"token,omitempty"`
+	// APIToken authenticates callers of Kamino's HTTP API. Generated on first
+	// serve, never returned by any endpoint.
+	APIToken        string `json:"api_token,omitempty"`
 	RawBaseTemplate string `json:"raw_base_template,omitempty"`
 }
 
 // Configured reports whether a config repo has been set.
 func (s Settings) Configured() bool { return s.RepoURL != "" }
 
+// HasRepoToken reports whether a config repo credential is set, without
+// exposing it.
+func (s Settings) HasRepoToken() bool { return s.RepoToken != "" }
+
 // Overrides carries one-off values from flags.
 type Overrides struct {
 	RepoURL         string
 	Ref             string
-	Token           string
+	RepoToken       string
 	RawBaseTemplate string
 }
 
@@ -92,11 +106,21 @@ func Resolve(saved Settings, flags Overrides) Settings {
 
 	out.RepoURL = pick(saved.RepoURL, os.Getenv("KAMINO_REPO"), flags.RepoURL)
 	out.Ref = pick(saved.Ref, os.Getenv("KAMINO_REF"), flags.Ref)
-	out.Token = pick(saved.Token, os.Getenv("KAMINO_TOKEN"), flags.Token)
+	out.RepoToken = pick(saved.RepoToken, os.Getenv("KAMINO_TOKEN"), flags.RepoToken)
 	out.RawBaseTemplate = pick(saved.RawBaseTemplate, os.Getenv("KAMINO_RAW_BASE"), flags.RawBaseTemplate)
 
 	if out.Ref == "" {
 		out.Ref = DefaultRef
 	}
 	return out
+}
+
+// GenerateAPIToken returns a fresh API token: 32 bytes from crypto/rand,
+// hex-encoded. Callers persist it in Settings.APIToken.
+func GenerateAPIToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generating api token: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
 }
