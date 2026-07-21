@@ -36,16 +36,16 @@ func (a *Apt) Install(ctx context.Context, it ResolvedItem) error {
 	}
 
 	if it.Repo != "" {
-		if err := runArgv(ctx, a.d, it, "add-apt-repository", "-y", it.Repo); err != nil {
+		if err := runArgv(ctx, a.d, it, addAptRepositoryPath, "-y", it.Repo); err != nil {
 			return err
 		}
 		// A freshly added repo has no package index yet, so the install that
 		// follows would otherwise fail with "unable to locate package".
-		if err := runArgvEnv(ctx, a.d, it, debianFrontendEnv, "apt-get", "update"); err != nil {
+		if err := runArgvEnv(ctx, a.d, it, debianFrontendEnv, aptGetPath, "update"); err != nil {
 			return err
 		}
 	}
 
 	args := append([]string{"install", "-y", "--"}, it.Packages...)
-	return runArgvEnv(ctx, a.d, it, debianFrontendEnv, "apt-get", args...)
+	return runArgvEnv(ctx, a.d, it, debianFrontendEnv, aptGetPath, args...)
 }

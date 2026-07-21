@@ -14,6 +14,24 @@ import (
 // /bin/sh -c.
 var debianFrontendEnv = []string{"DEBIAN_FRONTEND=noninteractive"}
 
+// Absolute paths for the distro-provided tools apt.go and deb.go invoke.
+// Kamino only ever targets Ubuntu (CLAUDE.md §1), so these three binaries'
+// locations are fixed by the distro's package layout, not something a host
+// could reasonably relocate — verified with `command -v` against a stock
+// Ubuntu install, not guessed. The tarball and binary runners' coreutils
+// calls (rm, mkdir, chmod, mv, sh) already run this way; resolving apt-get,
+// dpkg and add-apt-repository by bare name instead left them the only
+// commands in the engine trusting a root process's PATH to contain the
+// right binary first. pip.go is the deliberate exception: the Python
+// interpreter it invokes is not distro-fixed the same way (a user-installed
+// version can legitimately live outside /usr/bin), so it stays on PATH
+// lookup — see the comment on Pip.Install.
+const (
+	aptGetPath           = "/usr/bin/apt-get"
+	dpkgPath             = "/usr/bin/dpkg"
+	addAptRepositoryPath = "/usr/bin/add-apt-repository"
+)
+
 // Deb installs a downloaded .deb package.
 type Deb struct{ d Deps }
 
@@ -44,9 +62,9 @@ func (r *Deb) Install(ctx context.Context, it ResolvedItem) error {
 		return fmt.Errorf("%s: %w", it.Ref, err)
 	}
 
-	if err := runArgvEnv(ctx, r.d, it, debianFrontendEnv, "dpkg", "-i", pkg); err != nil {
+	if err := runArgvEnv(ctx, r.d, it, debianFrontendEnv, dpkgPath, "-i", pkg); err != nil {
 		return err
 	}
 
-	return runArgvEnv(ctx, r.d, it, debianFrontendEnv, "apt-get", "install", "-f", "-y")
+	return runArgvEnv(ctx, r.d, it, debianFrontendEnv, aptGetPath, "install", "-f", "-y")
 }
