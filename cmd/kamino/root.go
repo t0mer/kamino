@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +121,18 @@ func newLogHandler(w io.Writer, format string, level slog.Level) (slog.Handler, 
 // isTerminal reports whether w is an interactive terminal. Only *os.File can
 // be a terminal; any other io.Writer (a bytes.Buffer in a test, a pipe) is
 // never one.
+//
+// A character device is a good enough proxy here without pulling in a
+// dependency: Kamino refuses to run on anything but Ubuntu, so the Windows and
+// cygwin cases a portable isatty handles are unreachable.
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
-	return ok && isatty.IsTerminal(f.Fd())
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
