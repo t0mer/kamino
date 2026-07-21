@@ -109,3 +109,29 @@ func TestResolveFallsBackToBuiltInTimeout(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, engine.DefaultTimeout, got.Timeout)
 }
+
+func TestResolveNilStoreWithoutSecretsSucceeds(t *testing.T) {
+	it := manifest.Item{
+		ID: "go", Name: "Go", CategoryID: "dev", Type: manifest.ItemTarball,
+		Version: "1.24.5",
+		Source:  manifest.Source{"amd64": "https://go.dev/dl/go{version}.linux-amd64.tar.gz"},
+	}
+
+	got, err := engine.Resolve(it, "amd64", manifest.Defaults{}, nil)
+
+	require.NoError(t, err, "a nil store must not panic for an item with no secrets")
+	assert.Equal(t, "https://go.dev/dl/go1.24.5.linux-amd64.tar.gz", got.Source)
+}
+
+func TestResolveNilStoreWithSecretErrorsRatherThanPanicking(t *testing.T) {
+	it := manifest.Item{
+		ID: "cloudflared", Name: "Cloudflare Tunnel", CategoryID: "network", Type: manifest.ItemDeb,
+		PostInstall: []string{"cloudflared service install {secret:CF_TUNNEL_TOKEN}"},
+	}
+
+	_, err := engine.Resolve(it, "amd64", manifest.Defaults{}, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CF_TUNNEL_TOKEN")
+	assert.Contains(t, err.Error(), "network/cloudflared")
+}

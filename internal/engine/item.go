@@ -37,7 +37,15 @@ type ResolvedItem struct {
 }
 
 // Resolve turns a manifest item into an executable one for arch.
+//
+// A nil store is treated as an empty one: an item that references a secret
+// then fails with the usual missing-secret error rather than panicking, so a
+// caller that passes nil for an item it believes has no secrets gets a clear
+// message instead of a crash.
 func Resolve(it manifest.Item, arch string, defaults manifest.Defaults, s *secrets.Store) (ResolvedItem, error) {
+	if s == nil {
+		s = secrets.New()
+	}
 	expand := func(in string) (string, error) {
 		out, err := secrets.Expand(in, it.Version, s)
 		if err != nil {
