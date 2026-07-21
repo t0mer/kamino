@@ -236,7 +236,15 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status = state.StatusCancelled
 		}
-		return StepResult{Ref: step.Ref, Status: status, Err: redactErr(r, err)}
+		// A runner reports the command's exit code through runners.ExitError.
+		// Recording it here is what puts it in the run's history: an operator
+		// reading a failed run otherwise sees only prose, with no code.
+		var exitErr runners.ExitError
+		exitCode := 0
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode
+		}
+		return StepResult{Ref: step.Ref, Status: status, ExitCode: exitCode, Err: redactErr(r, err)}
 	}
 
 	for _, line := range item.PostInstall {

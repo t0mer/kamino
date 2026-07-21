@@ -43,8 +43,26 @@ func runArgvEnv(ctx context.Context, d Deps, it ResolvedItem, env []string, path
 		return fmt.Errorf("%s: running %q: %w", it.Ref, c.Line(), err)
 	}
 	if res.ExitCode != 0 {
-		return fmt.Errorf("%s: %q exited %d: %s",
-			it.Ref, c.Line(), res.ExitCode, strings.Join(res.Output(), "; "))
+		return ExitError{
+			ExitCode: res.ExitCode,
+			err: fmt.Errorf("%s: %q exited %d: %s",
+				it.Ref, c.Line(), res.ExitCode, strings.Join(res.Output(), "; ")),
+		}
 	}
 	return nil
 }
+
+// ExitError reports a command that ran and exited non-zero, carrying the code
+// alongside the message.
+//
+// The engine records this on the step so a failed run's history shows what the
+// command actually returned. Without a typed error the code was only present
+// in the message text, so it reached an operator's screen but never the
+// database — leaving the stored history undiagnostic.
+type ExitError struct {
+	ExitCode int
+	err      error
+}
+
+func (e ExitError) Error() string { return e.err.Error() }
+func (e ExitError) Unwrap() error { return e.err }
