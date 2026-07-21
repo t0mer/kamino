@@ -54,6 +54,20 @@ func request(p *plan.Plan) runmgr.StartRequest {
 	}
 }
 
+// waitIdle blocks until the manager reports no active run. Every test that
+// starts a run must call this before returning: a run still executing when
+// t.Cleanup closes the *state.Store below it keeps writing to a closed
+// database on its own goroutine, spamming later, unrelated tests with
+// "sql: database is closed" warnings and burying any real regression in that
+// noise (see the finding 4 fix).
+func waitIdle(t *testing.T, m *runmgr.Manager) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, busy := m.Active()
+		return !busy
+	}, 20*time.Second, 5*time.Millisecond, "the run must reach a terminal state before the test ends")
+}
+
 func TestStartReturnsARunID(t *testing.T) {
 	m, _, _ := newManager(t)
 
@@ -109,6 +123,35 @@ func TestSlotIsReleasedWhenTheRunFinishes(t *testing.T) {
 
 	_, err = m.Start(context.Background(), request(testPlan(aptItem("b"))))
 	assert.NoError(t, err, "a new run must be startable once the slot is free")
+}
+
+// TestRunningTheSamePlanTwiceInARowSucceeds is the end-to-end regression test
+// for finding 1: re-running any profile used to fail the second time with a
+// sqlite UNIQUE constraint violation, because persist reused the plan's item
+// ref as the step's global primary key. An operator retrying the very same
+// profile — the ordinary case, not an edge case — would hit this on every
+// second attempt.
+func TestRunningTheSamePlanTwiceInARowSucceeds(t *testing.T) {
+	m, db, _ := newManager(t)
+
+	plan := testPlan(aptItem("a"), aptItem("b"))
+
+	firstID, err := m.Start(context.Background(), request(plan))
+	require.NoError(t, err, "the first run of a plan must succeed")
+	waitIdle(t, m)
+
+	secondID, err := m.Start(context.Background(), request(plan))
+	require.NoError(t, err, "re-running the exact same plan must succeed, not fail on a duplicate step id")
+	waitIdle(t, m)
+
+	assert.NotEqual(t, firstID, secondID)
+
+	for _, id := range []string{firstID, secondID} {
+		run, steps, err := db.GetRun(id)
+		require.NoError(t, err)
+		require.Len(t, steps, 2)
+		assert.NotEqual(t, run.Status, "", "each run must have recorded a real status")
+	}
 }
 
 func TestCancelUnknownRunIsAnError(t *testing.T) {

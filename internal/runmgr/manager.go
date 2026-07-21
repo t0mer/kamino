@@ -41,9 +41,21 @@ type StartRequest struct {
 	ConfigSource    runners.ScriptSource
 }
 
+// runStepWriter is the subset of *state.Store that persist needs to create a
+// run and its steps. Production always passes the real *state.Store (which
+// satisfies this interface); tests in this package may substitute a fake
+// that fails CreateStep deterministically, to exercise the
+// run-gets-marked-failed cleanup path without depending on a genuine
+// database fault.
+type runStepWriter interface {
+	CreateRun(state.Run) error
+	CreateStep(state.Step) error
+}
+
 // Manager admits at most one run at a time and executes it in the background.
 type Manager struct {
 	db       *state.Store
+	writer   runStepWriter
 	bus      *events.Bus
 	keepRuns int
 
@@ -54,7 +66,7 @@ type Manager struct {
 
 // New builds a manager persisting to db and publishing to bus.
 func New(db *state.Store, bus *events.Bus, keepRuns int) *Manager {
-	return &Manager{db: db, bus: bus, keepRuns: keepRuns}
+	return &Manager{db: db, writer: db, bus: bus, keepRuns: keepRuns}
 }
 
 // Active reports the in-flight run's id, if any.
@@ -80,12 +92,13 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, error) {
 	m.cancel = cancel
 	m.mu.Unlock()
 
-	if err := m.persist(runID, req); err != nil {
+	stepIDs, err := m.persist(runID, req)
+	if err != nil {
 		m.release()
 		return "", err
 	}
 
-	go m.execute(runCtx, runID, req)
+	go m.execute(runCtx, runID, req, stepIDs)
 	return runID, nil
 }
 
@@ -104,34 +117,68 @@ func (m *Manager) Cancel(runID string) error {
 }
 
 // persist writes the run and its steps before execution begins, so a client
-// polling immediately after Start sees a real run rather than a 404.
-func (m *Manager) persist(runID string, req StartRequest) error {
-	if err := m.db.CreateRun(state.Run{
+// polling immediately after Start sees a real run rather than a 404. It
+// returns a map from each step's plan item ref (e.g. "tools/docker") to the
+// uuid primary key CreateStep gave it in sqlite, for execute to hand to
+// state.NewSink.
+//
+// Step ids are generated here with uuid.NewString — the same approach
+// cmd/kamino/apply.go's execute uses — rather than reusing the item ref as
+// the primary key. steps.id is a global PRIMARY KEY, not scoped by run_id
+// (see schema.go), so two runs of the same profile would otherwise try to
+// insert the same step id twice and the second run's CreateStep would fail
+// with a UNIQUE constraint violation.
+//
+// The engine and the events it publishes over the bus (see execute) always
+// identify a step by its item ref, never by this database id: the ref is
+// meaningful outside the process (it is the plan's own vocabulary), while
+// the uuid is purely a sqlite implementation detail. Any future code that
+// serves persisted run/step history to the browser must expose ItemRef, not
+// this ID, as the step identifier — otherwise a client comparing a live SSE
+// StepID against a replayed history entry would see two different values
+// for the same step.
+func (m *Manager) persist(runID string, req StartRequest) (map[string]string, error) {
+	if err := m.writer.CreateRun(state.Run{
 		ID:        runID,
 		StartedAt: time.Now().UTC(),
 		Profile:   req.Plan.ProfileID,
 		ConfigSHA: req.Plan.ConfigSHA,
 		Status:    state.StatusRunning,
 	}); err != nil {
-		return err
+		return nil, err
 	}
 
+	stepIDs := make(map[string]string, len(req.Plan.Steps))
 	for _, s := range req.Plan.Steps {
-		if err := m.db.CreateStep(state.Step{
-			ID:      s.Ref,
+		id := uuid.NewString()
+		if err := m.writer.CreateStep(state.Step{
+			ID:      id,
 			RunID:   runID,
 			ItemRef: s.Ref,
 			Name:    s.Name,
 			Status:  state.StatusPending,
 		}); err != nil {
-			return err
+			// The run row already exists at this point. Leaving it behind
+			// with status=running and finished_at=NULL would strand it as a
+			// phantom "in progress" run forever: nothing else ever
+			// transitions a run that never started executing. Close it out
+			// as failed before surfacing the error, so history views don't
+			// show a run that will never finish.
+			if finishErr := m.db.FinishRun(runID, state.StatusFailed, time.Now().UTC()); finishErr != nil {
+				slog.Warn("marking run failed after step persist error",
+					"run_id", runID, "error", finishErr)
+			}
+			return nil, fmt.Errorf("persisting step %q: %w", s.Ref, err)
 		}
+		stepIDs[s.Ref] = id
 	}
-	return nil
+	return stepIDs, nil
 }
 
-// execute runs the plan and always releases the run slot.
-func (m *Manager) execute(ctx context.Context, runID string, req StartRequest) {
+// execute runs the plan and always releases the run slot. stepIDs maps each
+// plan step's item ref to the database step id persist already created for
+// it.
+func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, stepIDs map[string]string) {
 	defer m.release()
 
 	tempDir, err := os.MkdirTemp("", "kamino-run-*")
@@ -146,11 +193,6 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest) {
 		Exec:     kexec.NewRealExecutor(),
 		Download: download.NewHTTPDownloader(nil),
 		TempDir:  tempDir,
-	}
-
-	stepIDs := map[string]string{}
-	for _, s := range req.Plan.Steps {
-		stepIDs[s.Ref] = s.Ref
 	}
 
 	eng := engine.New(
