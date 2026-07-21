@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -213,8 +214,12 @@ func execute(cmd *cobra.Command, built *plan.Plan, resolved *manifest.Resolved,
 	if err := db.FinishRun(runID, summary.Status, time.Now().UTC()); err != nil {
 		return err
 	}
+	// Pruning old history is housekeeping, not part of the install. Failing a
+	// provisioning run that actually succeeded — and exiting non-zero to a
+	// caller scripting against it — because we could not trim run 51 would be
+	// a far worse outcome than keeping it.
 	if err := db.Prune(KeepRuns); err != nil {
-		return err
+		slog.Warn("pruning old run history failed", "error", err)
 	}
 
 	fmt.Fprintf(out, "\nrun %s: %s in %s\n", runID, summary.Status, time.Since(started).Round(time.Second))
