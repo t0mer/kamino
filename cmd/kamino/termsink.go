@@ -47,6 +47,13 @@ func (t *termSink) StepStatus(_, stepRef string, s state.Status) {
 		fmt.Fprintf(t.out, "        %s — done\n", name)
 	case state.StatusFailed:
 		fmt.Fprintf(t.out, "        %s — FAILED\n", name)
+	case state.StatusCancelled:
+		// Like blocked, a step cancelled before it started arrives without a
+		// preceding running transition. Without a case here it printed
+		// nothing at all, so a Ctrl-C left the operator staring at a run that
+		// simply stopped saying anything.
+		t.done++
+		fmt.Fprintf(t.out, "[%d/%d] %s — cancelled\n", t.done, t.total, name)
 	case state.StatusBlocked:
 		// Blocked steps never run, so the engine emits this without a
 		// preceding running transition — this is where they get counted.

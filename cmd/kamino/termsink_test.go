@@ -44,6 +44,12 @@ func TestTermSinkCounterNeverExceedsTotal(t *testing.T) {
 			total:    1,
 			want:     "[1/1]",
 		},
+		{
+			name:     "cancelled step is reported rather than silently dropped",
+			statuses: []state.Status{state.StatusCancelled},
+			total:    1,
+			want:     "cancelled",
+		},
 	}
 
 	for _, tc := range tests {
