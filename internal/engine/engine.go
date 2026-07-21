@@ -65,6 +65,16 @@ func New(e kexec.CommandExecutor, lookup RunnerFor, sink Sink, opts Options) *En
 //
 // A step that fails is reported in the Summary, not returned as an error: only
 // a failure to run the plan at all (bad secrets, unusable config) is an error.
+//
+// Precondition: p.Steps must already be topologically sorted — every step's
+// dependencies must appear before it. plan.Build guarantees this ordering;
+// Run trusts it and does not re-check it. isBlocked only ever consults the
+// blocked map for refs seen earlier in the slice, so a step run before its
+// (failed or blocked) dependency will install as if that dependency had
+// succeeded. Run does not re-verify the ordering itself because plan.Build is
+// its only caller today and already does that work once, at plan time; a
+// second, per-run traversal here would just repeat it on every apply for a
+// condition the caller already enforces.
 func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, error) {
 	// The redactor is a point-in-time snapshot of e.opts.Secrets (see
 	// secrets.NewRedactor's doc comment): any secret registered on the store
