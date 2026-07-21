@@ -12,6 +12,7 @@ import (
 
 func TestDebDownloadsAndInstalls(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref:    "network/cloudflared",
@@ -29,7 +30,8 @@ func TestDebDownloadsAndInstalls(t *testing.T) {
 }
 
 func TestDebFixesBrokenDependencies(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "network/cloudflared", Source: "https://example.com/cloudflared.deb",
@@ -48,7 +50,8 @@ func TestDebFixesBrokenDependencies(t *testing.T) {
 }
 
 func TestDebSetsDebianFrontendNonInteractive(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "network/cloudflared", Source: "https://example.com/cloudflared.deb",
@@ -64,7 +67,8 @@ func TestDebSetsDebianFrontendNonInteractive(t *testing.T) {
 }
 
 func TestDebInstallFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 	fake.Script("dpkg -i", kexec.Result{ExitCode: 1, Stderr: []string{"dpkg: error processing archive"}})
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{
@@ -76,7 +80,8 @@ func TestDebInstallFailureIsAnError(t *testing.T) {
 }
 
 func TestDebFixupFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/cloudflared.deb", "binary content")
 	fake.Script("apt-get install -f -y", kexec.Result{ExitCode: 1, Stderr: []string{"unmet dependencies"}})
 
 	err := runners.NewDeb(d).Install(context.Background(), runners.ResolvedItem{

@@ -13,6 +13,7 @@ import (
 
 func TestBinaryInstallsToUsrLocalBin(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/yq_linux_amd64", "binary content")
 
 	err := runners.NewBinary(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "tools/yq", Source: "https://example.com/yq_linux_amd64", SHA256: "cafebabe",
@@ -27,7 +28,8 @@ func TestBinaryInstallsToUsrLocalBin(t *testing.T) {
 }
 
 func TestBinaryHonoursExplicitPath(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/yq", "binary content")
 
 	err := runners.NewBinary(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "tools/yq", Source: "https://example.com/yq", Path: "/opt/bin/yq",
@@ -47,7 +49,8 @@ func TestBinaryWithoutSourceIsAnError(t *testing.T) {
 }
 
 func TestBinaryMoveFailureIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/yq", "binary content")
 	fake.Script("mv -f", kexec.Result{ExitCode: 1, Stderr: []string{"Permission denied"}})
 
 	err := runners.NewBinary(d).Install(context.Background(), runners.ResolvedItem{
@@ -79,7 +82,8 @@ func TestBinaryCheckDelegatesToProbe(t *testing.T) {
 // never a second command.
 
 func TestBinaryPathMetacharactersAreInert(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/yq", "binary content")
 
 	evil := "/opt/bin/yq; rm -rf /root #"
 	err := runners.NewBinary(d).Install(context.Background(), runners.ResolvedItem{
@@ -114,7 +118,8 @@ func TestBinaryRefusesRelativePath(t *testing.T) {
 // the log would not catch a swapped order. Assert the sequence by index.
 
 func TestBinaryInstallCommandOrder(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://example.com/yq", "binary content")
 
 	err := runners.NewBinary(d).Install(context.Background(), runners.ResolvedItem{
 		Ref: "tools/yq", Source: "https://example.com/yq",

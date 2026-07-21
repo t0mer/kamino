@@ -35,6 +35,7 @@ func (f *fakeSource) Fetch(_ context.Context, _ string, path string) ([]byte, er
 
 func TestScriptDownloadsRemoteURL(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://get.docker.com", "#!/bin/sh\necho install\n")
 	src := &fakeSource{files: map[string]string{}}
 
 	err := runners.NewScript(d, src, "abc123").Install(context.Background(), runners.ResolvedItem{
@@ -91,7 +92,8 @@ func TestScriptMissingRepoFileIsAnError(t *testing.T) {
 }
 
 func TestScriptNonZeroExitIsAnError(t *testing.T) {
-	d, fake, _ := depsWithDownloader(t)
+	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://get.docker.com", "#!/bin/sh\necho install\n")
 	fake.Script("/bin/sh", kexec.Result{ExitCode: 1, Stderr: []string{"install failed"}})
 	src := &fakeSource{files: map[string]string{}}
 
@@ -147,6 +149,7 @@ func TestScriptRejectsUnusableItemName(t *testing.T) {
 // expose it and redaction cannot reach.
 func TestScriptNameComesFromRefNotSource(t *testing.T) {
 	d, fake, dl := depsWithDownloader(t)
+	dl.Content("https://get.docker.com/install.sh?token=sup3rs3cret", "#!/bin/sh\necho install\n")
 	src := &fakeSource{files: map[string]string{}}
 
 	err := runners.NewScript(d, src, "abc123").Install(context.Background(), runners.ResolvedItem{
