@@ -94,7 +94,18 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 	halted := false
 
 	if e.opts.AptUpdate {
-		if _, err := e.runShell(ctx, runID, "apt-update", "apt-get update", redactor, 0); err != nil {
+		// A timeout of 0 disables exec's timeout entirely (see
+		// internal/exec.RealExecutor.Run, which only wraps the context when
+		// c.Timeout > 0), so an unreachable apt mirror would otherwise hang
+		// this run-scoped update — and therefore the whole run — forever.
+		// Give it the same default-timeout precedence a normal step gets
+		// (manifest default, else engine.DefaultTimeout); there is no item
+		// here to carry a more specific per-step override.
+		timeout := e.opts.Defaults.Timeout
+		if timeout == 0 {
+			timeout = DefaultTimeout
+		}
+		if _, err := e.runShell(ctx, runID, "apt-update", "apt-get update", redactor, timeout); err != nil {
 			return Summary{}, fmt.Errorf("running apt-get update: %w", err)
 		}
 	}

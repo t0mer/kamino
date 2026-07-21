@@ -122,6 +122,51 @@ func TestRunAptUpdateRunsOnceAtStart(t *testing.T) {
 	assert.Equal(t, 1, updates, "apt-get update is run-scoped, not per step")
 }
 
+// TestRunAptUpdateHasABoundedTimeout pins Finding 4: the run-scoped
+// "apt-get update" used to be issued with a literal 0 timeout, and
+// internal/exec.RealExecutor.Run only wraps a command's context when
+// Timeout > 0 — so an unreachable apt mirror hung the whole run forever.
+// This asserts the command carries a nonzero timeout by the time it reaches
+// the executor, both when the manifest sets a default and when it doesn't
+// (falling back to engine.DefaultTimeout).
+func TestRunAptUpdateHasABoundedTimeout(t *testing.T) {
+	t.Run("falls back to engine.DefaultTimeout when the manifest sets none", func(t *testing.T) {
+		fake := kexec.NewFakeExecutor()
+		eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{AptUpdate: true})
+
+		_, err := eng.Run(context.Background(), testPlan(aptItem("a")), "run-1")
+
+		require.NoError(t, err)
+		update := findAptUpdateCall(t, fake)
+		assert.Equal(t, engine.DefaultTimeout, update.Timeout)
+	})
+
+	t.Run("uses the manifest default when set", func(t *testing.T) {
+		fake := kexec.NewFakeExecutor()
+		eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{
+			AptUpdate: true,
+			Defaults:  manifest.Defaults{Timeout: 2 * time.Minute},
+		})
+
+		_, err := eng.Run(context.Background(), testPlan(aptItem("a")), "run-1")
+
+		require.NoError(t, err)
+		update := findAptUpdateCall(t, fake)
+		assert.Equal(t, 2*time.Minute, update.Timeout)
+	})
+}
+
+func findAptUpdateCall(t *testing.T, fake *kexec.FakeExecutor) kexec.Command {
+	t.Helper()
+	for _, c := range fake.Calls() {
+		if c.Line() == "/bin/sh -c apt-get update" {
+			return c
+		}
+	}
+	t.Fatal("apt-get update was never run")
+	return kexec.Command{}
+}
+
 func TestRunHaltsOnFailureAndBlocksRest(t *testing.T) {
 	eng := newEngine(t, kexec.NewFakeExecutor(),
 		stubRunner{installErr: errors.New("boom")}, &recordingSink{}, engine.Options{})
