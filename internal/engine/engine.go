@@ -160,6 +160,34 @@ func (e *Engine) isBlocked(step plan.Step, blocked map[string]bool) bool {
 	return false
 }
 
+// redactedError masks secret values in an error's message while leaving the
+// error chain intact, so errors.Is still matches sentinels like
+// context.DeadlineExceeded.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e redactedError) Error() string { return e.msg }
+func (e redactedError) Unwrap() error { return e.err }
+
+// redactErr masks any secret value appearing in err's message.
+//
+// Resolve expands {secret:NAME} into an item's Source, Check, CheckContains and
+// Packages, so a runner that mentions any of those in its error — a downloader
+// naming the URL it failed to fetch, say — would otherwise carry a live
+// credential into StepResult.Err, which callers persist to disk.
+func redactErr(r *secrets.Redactor, err error) error {
+	if err == nil {
+		return nil
+	}
+	masked := r.Redact(err.Error())
+	if masked == err.Error() {
+		return err
+	}
+	return redactedError{msg: masked, err: err}
+}
+
 func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.Step, r *secrets.Redactor) StepResult {
 	e.sink.StepStatus(runID, stepID, state.StatusRunning)
 
@@ -178,7 +206,7 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 
 	installed, err := runner.Check(ctx, item)
 	if err != nil {
-		return StepResult{Ref: step.Ref, Status: state.StatusFailed, Err: err}
+		return StepResult{Ref: step.Ref, Status: state.StatusFailed, Err: redactErr(r, err)}
 	}
 	if installed {
 		return StepResult{Ref: step.Ref, Status: state.StatusSkipped}
@@ -197,7 +225,7 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status = state.StatusCancelled
 		}
-		return StepResult{Ref: step.Ref, Status: status, Err: err}
+		return StepResult{Ref: step.Ref, Status: status, Err: redactErr(r, err)}
 	}
 
 	for _, line := range item.PostInstall {

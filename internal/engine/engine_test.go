@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -342,4 +343,59 @@ func TestRunPreAndPostInstallCommands(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, fake.CommandLines(), "/bin/sh -c echo before")
 	assert.Contains(t, fake.CommandLines(), "/bin/sh -c echo after")
+}
+
+// leakyRunner mimics a real runner that names the resource it was working on
+// in its error. Resolve expands {secret:NAME} into Source, so that message can
+// carry a live credential.
+type leakyRunner struct {
+	err error
+}
+
+func (l leakyRunner) Check(context.Context, engine.ResolvedItem) (bool, error) { return false, nil }
+
+func (l leakyRunner) Install(_ context.Context, it engine.ResolvedItem) error {
+	if l.err != nil {
+		return l.err
+	}
+	return fmt.Errorf("downloading %s: connection reset", it.Source)
+}
+
+func TestRunRunnerErrorNeverLeaksSecret(t *testing.T) {
+	store := secrets.New()
+	store.Set("DL_TOKEN", "sup3rs3cret")
+
+	it := aptItem("a")
+	it.Source = manifest.Source{"amd64": "https://example.com/artifact?token={secret:DL_TOKEN}"}
+
+	eng := newEngine(t, kexec.NewFakeExecutor(), leakyRunner{}, &recordingSink{},
+		engine.Options{Secrets: store})
+	got, err := eng.Run(context.Background(), testPlan(it), "run-1")
+
+	require.NoError(t, err)
+	require.Error(t, got.Steps[0].Err)
+	assert.NotContains(t, got.Steps[0].Err.Error(), "sup3rs3cret",
+		"a runner error must not carry a credential into the persisted run result")
+	assert.Contains(t, got.Steps[0].Err.Error(), "***")
+}
+
+func TestRunRedactedRunnerErrorStillUnwraps(t *testing.T) {
+	store := secrets.New()
+	store.Set("DL_TOKEN", "sup3rs3cret")
+
+	it := aptItem("a")
+	it.Source = manifest.Source{"amd64": "https://example.com/x?token={secret:DL_TOKEN}"}
+
+	// An error that both mentions the secret and wraps a sentinel: redaction
+	// must not break the sentinel match that drives timeout handling.
+	wrapped := fmt.Errorf("fetching https://example.com/x?token=sup3rs3cret: %w", context.DeadlineExceeded)
+
+	eng := newEngine(t, kexec.NewFakeExecutor(), leakyRunner{err: wrapped}, &recordingSink{},
+		engine.Options{Secrets: store})
+	got, err := eng.Run(context.Background(), testPlan(it), "run-1")
+
+	require.NoError(t, err)
+	assert.NotContains(t, got.Steps[0].Err.Error(), "sup3rs3cret")
+	assert.True(t, errors.Is(got.Steps[0].Err, context.DeadlineExceeded),
+		"redaction must preserve the error chain, or timeout detection breaks")
 }
