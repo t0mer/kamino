@@ -26,7 +26,17 @@ import (
 // are themselves declared by the config repo as free-form shell — that
 // trust boundary is unchanged by this helper (see CLAUDE.md §7).
 func runArgv(ctx context.Context, d Deps, it ResolvedItem, path string, args ...string) error {
-	c := kexec.Command{Path: path, Args: args, Timeout: it.Timeout}
+	return runArgvEnv(ctx, d, it, nil, path, args...)
+}
+
+// runArgvEnv is runArgv with additional environment variables set on the
+// command. RealExecutor appends Command.Env to os.Environ(), so env only ever
+// adds entries and never strips the ambient environment (PATH included).
+//
+// dpkg and apt-get need it for DEBIAN_FRONTEND=noninteractive, so a package's
+// postinst cannot open a dialog and hang the run until the step timeout.
+func runArgvEnv(ctx context.Context, d Deps, it ResolvedItem, env []string, path string, args ...string) error {
+	c := kexec.Command{Path: path, Args: args, Env: env, Timeout: it.Timeout}
 
 	res, err := d.Exec.Run(ctx, c, nil)
 	if err != nil {

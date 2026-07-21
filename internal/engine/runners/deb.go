@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
-
-	kexec "github.com/t0mer/kamino/internal/exec"
 )
 
 // debianFrontendEnv sets DEBIAN_FRONTEND=noninteractive on dpkg/apt-get
@@ -50,24 +47,4 @@ func (r *Deb) Install(ctx context.Context, it ResolvedItem) error {
 	}
 
 	return runArgvEnv(ctx, r.d, it, debianFrontendEnv, "apt-get", "install", "-f", "-y")
-}
-
-// runArgvEnv is runArgv (argv.go) plus additional environment variables on
-// the command. It is defined here rather than in argv.go because dpkg/apt-get
-// are, so far, the only commands in this package that need an env override;
-// every other runArgv caller is fine with the executor's default
-// (RealExecutor appends Command.Env to os.Environ(), so env only ever adds
-// entries, never removes the ambient environment).
-func runArgvEnv(ctx context.Context, d Deps, it ResolvedItem, env []string, path string, args ...string) error {
-	c := kexec.Command{Path: path, Args: args, Env: env, Timeout: it.Timeout}
-
-	res, err := d.Exec.Run(ctx, c, nil)
-	if err != nil {
-		return fmt.Errorf("%s: running %q: %w", it.Ref, c.Line(), err)
-	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("%s: %q exited %d: %s",
-			it.Ref, c.Line(), res.ExitCode, strings.Join(res.Output(), "; "))
-	}
-	return nil
 }
