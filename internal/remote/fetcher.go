@@ -18,8 +18,22 @@ import (
 // re-enforced explicitly whenever the caller hasn't supplied their own policy.
 const maxRedirects = 10
 
+// maxConfigFileSize caps how many bytes of a single config-repo file
+// (manifest.yaml, a category file, a profile file) HTTPFetcher will hold in
+// memory. These are hand-authored YAML documents — even a manifest listing
+// hundreds of items across every category comes to a few hundred KiB at
+// most. 10 MiB is roughly two orders of magnitude above that, comfortably
+// clear of anything a legitimate config repo would ever produce, while still
+// bounding how much a compromised or merely misconfigured host can force a
+// root-running process to read into memory.
+const maxConfigFileSize = 10 << 20 // 10 MiB
+
 // ErrNotFound reports that a path does not exist in the config repo.
 var ErrNotFound = errors.New("not found in config repo")
+
+// ErrTooLarge reports that a config-repo file exceeded the size limit this
+// fetcher enforces.
+var ErrTooLarge = errors.New("config file too large")
 
 // Fetcher retrieves config repo files as raw content.
 type Fetcher interface {
@@ -36,6 +50,8 @@ type HTTPFetcher struct {
 	mu    sync.Mutex
 	mem   map[string][]byte
 	stale bool
+
+	maxSize int64
 }
 
 // NewHTTPFetcher builds a fetcher for repo. A nil client uses a 30s default.
@@ -58,10 +74,11 @@ func NewHTTPFetcher(repo *Repo, cacheDir string, client *http.Client) *HTTPFetch
 	guarded := *client
 	guarded.CheckRedirect = redirectAuthGuard(repo, client.CheckRedirect)
 	return &HTTPFetcher{
-		repo:   repo,
-		client: &guarded,
-		cache:  diskCache{dir: cacheDir},
-		mem:    map[string][]byte{},
+		repo:    repo,
+		client:  &guarded,
+		cache:   diskCache{dir: cacheDir},
+		mem:     map[string][]byte{},
+		maxSize: maxConfigFileSize,
 	}
 }
 
@@ -180,9 +197,19 @@ func (f *HTTPFetcher) get(ctx context.Context, ref, path string) ([]byte, error)
 		return nil, fmt.Errorf("fetching %s: unexpected status %d", path, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	// Read at most maxSize+1 bytes so an over-limit response can be told apart
+	// from one that lands exactly on the limit: ReadAll only returns fewer
+	// than maxSize+1 bytes if the body itself was shorter, in which case a
+	// body of exactly maxSize bytes is correctly accepted. Reading with a cap
+	// (rather than io.ReadAll with none) is the fix itself — an unbounded
+	// read here is how a compromised or misconfigured config-repo host OOMs
+	// a process that runs the rest of this plan as root.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, f.maxSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if int64(len(body)) > f.maxSize {
+		return nil, fmt.Errorf("fetching %s: %w: exceeds %d byte limit", path, ErrTooLarge, f.maxSize)
 	}
 	return body, nil
 }
