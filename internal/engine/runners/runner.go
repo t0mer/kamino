@@ -10,8 +10,11 @@ package runners
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/t0mer/kamino/internal/download"
+	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/manifest"
 )
 
@@ -47,4 +50,43 @@ type Runner interface {
 	Check(ctx context.Context, item ResolvedItem) (bool, error)
 	// Install installs the item.
 	Install(ctx context.Context, item ResolvedItem) error
+}
+
+// Deps are the collaborators every runner needs to talk to the host: a
+// command executor, a downloader for remote artifacts, and a directory for
+// any files a step must write to disk before it can execute.
+type Deps struct {
+	Exec     kexec.CommandExecutor
+	Download download.Downloader
+	TempDir  string
+}
+
+// CheckProbe is the shared idempotency probe used by every runner's Check.
+//
+// One rule, no exit-code special-casing: only a zero exit whose output
+// contains it.CheckContains counts as installed. Everything else — a
+// non-zero exit (including 127 for a missing binary), a zero exit whose
+// output does not contain CheckContains, an empty Check (we cannot tell), or
+// the probe failing to run at all — means "not installed, go ahead". A probe
+// that cannot run is treated as an answer, not a step failure: the installer
+// that follows will produce a more useful error than the probe could.
+func CheckProbe(ctx context.Context, d Deps, it ResolvedItem) (bool, error) {
+	if it.Check == "" {
+		return false, nil
+	}
+
+	c := kexec.Shell(it.Check)
+	c.Timeout = it.Timeout
+
+	res, err := d.Exec.Run(ctx, c, nil)
+	if err != nil {
+		return false, nil
+	}
+	if res.ExitCode != 0 {
+		return false, nil
+	}
+	if it.CheckContains == "" {
+		return true, nil
+	}
+	return strings.Contains(strings.Join(res.Output(), "\n"), it.CheckContains), nil
 }
