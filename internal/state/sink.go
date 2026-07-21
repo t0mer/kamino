@@ -19,13 +19,13 @@ func NewSink(store *Store, stepIDs map[string]string) *Sink {
 	return &Sink{store: store, stepIDs: stepIDs}
 }
 
-// StepStatus records a step transition.
-func (s *Sink) StepStatus(_, stepRef string, status Status) {
+// StepStatus records a step transition and its exit code.
+func (s *Sink) StepStatus(_, stepRef string, status Status, exitCode int) {
 	id, ok := s.stepIDs[stepRef]
 	if !ok {
 		return
 	}
-	if err := s.store.UpdateStepStatus(id, status, time.Now().UTC(), 0); err != nil {
+	if err := s.store.UpdateStepStatus(id, status, time.Now().UTC(), exitCode); err != nil {
 		slog.Warn("persisting step status failed", "step", stepRef, "error", err)
 	}
 }

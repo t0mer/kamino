@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/t0mer/kamino/schema/category.schema.json",
+  "title": "Kamino category file",
+  "type": "object",
+  "required": ["id", "name", "items"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "name": { "type": "string" },
+    "order": { "type": "integer" },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "source": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "amd64": { "type": "string" },
+            "arm64": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "item": {
+      "type": "object",
+      "required": ["id", "name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "name": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["apt", "deb", "tarball", "binary", "pip", "script", "compose_stack", "snap"]
+        },
+        "version": { "type": "string" },
+        "source": { "$ref": "#/$defs/source" },
+        "sha256": { "$ref": "#/$defs/source" },
+        "packages": { "type": "array", "items": { "type": "string" } },
+        "repo": { "type": "string" },
+        "python": { "type": "string" },
+        "install_dir": { "type": "string" },
+        "path_export": { "type": "string" },
+        "path": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "env_file": { "type": "string" },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$" }
+        },
+        "check": { "type": "string" },
+        "check_contains": { "type": "string" },
+        "pre_install": { "type": "array", "items": { "type": "string" } },
+        "post_install": { "type": "array", "items": { "type": "string" } },
+        "timeout": { "type": "string", "pattern": "^[0-9]+[smh]$" },
+        "arch": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["amd64", "arm64"] }
+        },
+        "secrets": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

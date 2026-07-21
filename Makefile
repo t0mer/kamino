@@ -13,3 +13,7 @@ vet:
 
 lint:
 	golangci-lint run
+
+.PHONY: smoke
+smoke:
+	./scripts/smoke.sh

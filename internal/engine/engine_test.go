@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +25,7 @@ type recordingSink struct {
 	lines    []string
 }
 
-func (r *recordingSink) StepStatus(_, stepID string, s state.Status) {
+func (r *recordingSink) StepStatus(_, stepID string, s state.Status, _ int) {
 	r.statuses = append(r.statuses, stepID+"="+string(s))
 }
 
@@ -118,6 +120,51 @@ func TestRunAptUpdateRunsOnceAtStart(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, updates, "apt-get update is run-scoped, not per step")
+}
+
+// TestRunAptUpdateHasABoundedTimeout pins Finding 4: the run-scoped
+// "apt-get update" used to be issued with a literal 0 timeout, and
+// internal/exec.RealExecutor.Run only wraps a command's context when
+// Timeout > 0 — so an unreachable apt mirror hung the whole run forever.
+// This asserts the command carries a nonzero timeout by the time it reaches
+// the executor, both when the manifest sets a default and when it doesn't
+// (falling back to engine.DefaultTimeout).
+func TestRunAptUpdateHasABoundedTimeout(t *testing.T) {
+	t.Run("falls back to engine.DefaultTimeout when the manifest sets none", func(t *testing.T) {
+		fake := kexec.NewFakeExecutor()
+		eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{AptUpdate: true})
+
+		_, err := eng.Run(context.Background(), testPlan(aptItem("a")), "run-1")
+
+		require.NoError(t, err)
+		update := findAptUpdateCall(t, fake)
+		assert.Equal(t, engine.DefaultTimeout, update.Timeout)
+	})
+
+	t.Run("uses the manifest default when set", func(t *testing.T) {
+		fake := kexec.NewFakeExecutor()
+		eng := newEngine(t, fake, stubRunner{}, &recordingSink{}, engine.Options{
+			AptUpdate: true,
+			Defaults:  manifest.Defaults{Timeout: 2 * time.Minute},
+		})
+
+		_, err := eng.Run(context.Background(), testPlan(aptItem("a")), "run-1")
+
+		require.NoError(t, err)
+		update := findAptUpdateCall(t, fake)
+		assert.Equal(t, 2*time.Minute, update.Timeout)
+	})
+}
+
+func findAptUpdateCall(t *testing.T, fake *kexec.FakeExecutor) kexec.Command {
+	t.Helper()
+	for _, c := range fake.Calls() {
+		if c.Line() == "/bin/sh -c apt-get update" {
+			return c
+		}
+	}
+	t.Fatal("apt-get update was never run")
+	return kexec.Command{}
 }
 
 func TestRunHaltsOnFailureAndBlocksRest(t *testing.T) {
@@ -284,6 +331,46 @@ func TestRunPreInstallExitCodeReachesStepResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, got.Steps[0].Err)
 	assert.Equal(t, 17, got.Steps[0].ExitCode)
+}
+
+// TestRunFailedStepExitCodeReachesSQLite is the end-to-end regression for
+// Finding 3: TestRunPreInstallExitCodeReachesStepResult (above) already
+// proved the engine computes the right StepResult.ExitCode, but that value
+// used to die at the Sink boundary — engine.Sink.StepStatus had no way to
+// carry it, so internal/state.Sink hardcoded UpdateStepStatus's exit code to
+// 0 no matter what the command actually returned. This test drives a failing
+// step through the real engine into a real sqlite-backed state.Sink and
+// reads the row back, so a regression at either end of that seam fails here.
+func TestRunFailedStepExitCodeReachesSQLite(t *testing.T) {
+	db, err := state.Open(filepath.Join(t.TempDir(), "k.db"))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	require.NoError(t, db.CreateRun(state.Run{
+		ID: "run-1", Status: state.StatusRunning, StartedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, db.CreateStep(state.Step{
+		ID: "step-1", RunID: "run-1", ItemRef: "c/a", Status: state.StatusPending,
+	}))
+
+	fake := kexec.NewFakeExecutor()
+	fake.Script("false-ish", kexec.Result{ExitCode: 42})
+
+	it := aptItem("a")
+	it.PreInstall = []string{"false-ish"}
+
+	sink := state.NewSink(db, map[string]string{"c/a": "step-1"})
+	eng := newEngine(t, fake, stubRunner{}, sink, engine.Options{})
+
+	_, err = eng.Run(context.Background(), testPlan(it), "run-1")
+	require.NoError(t, err)
+
+	_, steps, err := db.GetRun("run-1")
+	require.NoError(t, err)
+	require.Len(t, steps, 1)
+	assert.Equal(t, state.StatusFailed, steps[0].Status)
+	assert.Equal(t, 42, steps[0].ExitCode,
+		"the command's real exit code must reach sqlite, not the hardcoded 0")
 }
 
 // TestRunStepTimeoutHaltsAndBlocksWhenNotContinuing pins Finding 2: a step

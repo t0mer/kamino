@@ -94,7 +94,18 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 	halted := false
 
 	if e.opts.AptUpdate {
-		if _, err := e.runShell(ctx, runID, "apt-update", "apt-get update", redactor, 0); err != nil {
+		// A timeout of 0 disables exec's timeout entirely (see
+		// internal/exec.RealExecutor.Run, which only wraps the context when
+		// c.Timeout > 0), so an unreachable apt mirror would otherwise hang
+		// this run-scoped update — and therefore the whole run — forever.
+		// Give it the same default-timeout precedence a normal step gets
+		// (manifest default, else engine.DefaultTimeout); there is no item
+		// here to carry a more specific per-step override.
+		timeout := e.opts.Defaults.Timeout
+		if timeout == 0 {
+			timeout = DefaultTimeout
+		}
+		if _, err := e.runShell(ctx, runID, "apt-update", "apt-get update", redactor, timeout); err != nil {
 			return Summary{}, fmt.Errorf("running apt-get update: %w", err)
 		}
 	}
@@ -103,7 +114,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 		stepID := step.Ref
 
 		if ctx.Err() != nil {
-			e.sink.StepStatus(runID, stepID, state.StatusCancelled)
+			e.sink.StepStatus(runID, stepID, state.StatusCancelled, 0)
 			summary.Steps = append(summary.Steps, StepResult{Ref: step.Ref, Status: state.StatusCancelled})
 			summary.Status = state.StatusCancelled
 			continue
@@ -111,14 +122,14 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, runID string) (Summary, 
 
 		if halted || e.isBlocked(step, blocked) {
 			blocked[step.Ref] = true
-			e.sink.StepStatus(runID, stepID, state.StatusBlocked)
+			e.sink.StepStatus(runID, stepID, state.StatusBlocked, 0)
 			summary.Steps = append(summary.Steps, StepResult{Ref: step.Ref, Status: state.StatusBlocked})
 			continue
 		}
 
 		result := e.runStep(ctx, runID, stepID, step, redactor)
 		summary.Steps = append(summary.Steps, result)
-		e.sink.StepStatus(runID, stepID, result.Status)
+		e.sink.StepStatus(runID, stepID, result.Status, result.ExitCode)
 
 		// A step that timed out or was cancelled mid-install is just as
 		// unusable to its dependents as one that failed outright — its
@@ -189,7 +200,7 @@ func redactErr(r *secrets.Redactor, err error) error {
 }
 
 func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.Step, r *secrets.Redactor) StepResult {
-	e.sink.StepStatus(runID, stepID, state.StatusRunning)
+	e.sink.StepStatus(runID, stepID, state.StatusRunning, 0)
 
 	item, err := Resolve(step.Item, e.opts.Arch, e.opts.Defaults, e.opts.Secrets)
 	if err != nil {
@@ -225,7 +236,15 @@ func (e *Engine) runStep(ctx context.Context, runID, stepID string, step plan.St
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status = state.StatusCancelled
 		}
-		return StepResult{Ref: step.Ref, Status: status, Err: redactErr(r, err)}
+		// A runner reports the command's exit code through runners.ExitError.
+		// Recording it here is what puts it in the run's history: an operator
+		// reading a failed run otherwise sees only prose, with no code.
+		var exitErr runners.ExitError
+		exitCode := 0
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode
+		}
+		return StepResult{Ref: step.Ref, Status: status, ExitCode: exitCode, Err: redactErr(r, err)}
 	}
 
 	for _, line := range item.PostInstall {

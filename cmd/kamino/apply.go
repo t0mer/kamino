@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -93,6 +94,13 @@ func newApplyCmd() *cobra.Command {
 				return nil
 			}
 
+			// The headless path is the one command that actually mutates the
+			// host, so the same safety warnings validate.go and plan.go show
+			// on every other command must appear here too, before the first
+			// step runs — not after a failure, and not only when --dry-run
+			// is passed.
+			printApplyWarnings(out, resolved, built)
+
 			info, err := sysinfo.Detect()
 			if err != nil {
 				return err
@@ -120,6 +128,23 @@ func newApplyCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&secretFlags, "secret", nil, "secret value as KEY=VALUE (repeatable)")
 	_ = cmd.MarkFlagRequired("profile")
 	return cmd
+}
+
+// printApplyWarnings surfaces the operator-facing safety warnings on the real
+// (non-dry-run) apply path, using the same wording validate.go and plan.go
+// already use for the same conditions. Without this, `apply` was the only
+// command that computed these warnings and then never showed them: a
+// headless `sudo kamino apply --yes` would install unverified downloads and
+// root-executed scripts, or provision from a stale cached config, without
+// printing a word about it.
+func printApplyWarnings(out io.Writer, resolved *manifest.Resolved, built *plan.Plan) {
+	if resolved.Stale {
+		fmt.Fprintf(out, "warning: stale config (SHA %s, fetched %s)\n",
+			resolved.SHA, resolved.FetchedAt.Format("2006-01-02T15:04Z"))
+	}
+	for _, w := range built.Warnings {
+		fmt.Fprintf(out, "warning: %s\n", w)
+	}
 }
 
 // runInTempDir creates a per-run temp directory, invokes fn with its path, and
