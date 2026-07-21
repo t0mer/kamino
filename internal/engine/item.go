@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/t0mer/kamino/internal/engine/runners"
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/secrets"
 )
@@ -15,26 +16,12 @@ const DefaultTimeout = 15 * time.Minute
 // ResolvedItem is an item with its architecture chosen and every placeholder
 // expanded. Runners only ever see this type, so templating is implemented and
 // tested in exactly one place.
-type ResolvedItem struct {
-	Ref           string
-	Name          string
-	Type          manifest.ItemType
-	Version       string
-	Source        string
-	SHA256        string
-	Packages      []string
-	Repo          string
-	Python        string
-	InstallDir    string
-	PathExport    string
-	Path          string
-	Files         []string
-	Check         string
-	CheckContains string
-	PreInstall    []string
-	PostInstall   []string
-	Timeout       time.Duration
-}
+//
+// This is a type alias, not a new type: the struct is defined in
+// internal/engine/runners (a leaf package with no dependency on engine) so
+// that package can declare its Runner interface over the same type engine
+// uses, without an import cycle. See runners.ResolvedItem's doc comment.
+type ResolvedItem = runners.ResolvedItem
 
 // Resolve turns a manifest item into an executable one for arch.
 //
