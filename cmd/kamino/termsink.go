@@ -40,13 +40,16 @@ func (t *termSink) StepStatus(_, stepRef string, s state.Status) {
 		t.done++
 		fmt.Fprintf(t.out, "[%d/%d] %s…\n", t.done, t.total, name)
 	case state.StatusSkipped:
-		t.done++
+		// No increment: a skipped step was already counted when the engine
+		// announced it as running. Counting it twice printed "[2/1]".
 		fmt.Fprintf(t.out, "[%d/%d] %s — already installed, skipped\n", t.done, t.total, name)
 	case state.StatusSuccess:
 		fmt.Fprintf(t.out, "        %s — done\n", name)
 	case state.StatusFailed:
 		fmt.Fprintf(t.out, "        %s — FAILED\n", name)
 	case state.StatusBlocked:
+		// Blocked steps never run, so the engine emits this without a
+		// preceding running transition — this is where they get counted.
 		t.done++
 		fmt.Fprintf(t.out, "[%d/%d] %s — blocked by a failed dependency\n", t.done, t.total, name)
 	}
