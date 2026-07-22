@@ -31,11 +31,13 @@ type runSummary struct {
 }
 
 type runStep struct {
-	ID       string `json:"id"`
-	ItemRef  string `json:"item_ref"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	ExitCode int    `json:"exit_code"`
+	ID         string `json:"id"`
+	ItemRef    string `json:"item_ref"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	ExitCode   int    `json:"exit_code"`
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
 }
 
 type runDetail struct {
@@ -137,10 +139,17 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 	detail := runDetail{runSummary: toSummary(run)}
 	for _, st := range steps {
-		detail.Steps = append(detail.Steps, runStep{
+		rs := runStep{
 			ID: st.ID, ItemRef: st.ItemRef, Name: st.Name,
 			Status: string(st.Status), ExitCode: st.ExitCode,
-		})
+		}
+		if st.StartedAt != nil {
+			rs.StartedAt = st.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if st.FinishedAt != nil {
+			rs.FinishedAt = st.FinishedAt.UTC().Format(time.RFC3339)
+		}
+		detail.Steps = append(detail.Steps, rs)
 	}
 	writeJSON(w, http.StatusOK, detail)
 }

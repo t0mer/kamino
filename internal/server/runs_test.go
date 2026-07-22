@@ -170,3 +170,31 @@ func TestGetRunReturnsItsSteps(t *testing.T) {
 	require.Len(t, got.Steps, 1)
 	assert.Equal(t, "tools/jq", got.Steps[0].ItemRef)
 }
+
+func TestGetRunIncludesPerStepTimings(t *testing.T) {
+	h, db, _ := newRunServer(t)
+
+	start := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
+	fin := start.Add(3 * time.Second)
+	require.NoError(t, db.CreateRun(state.Run{ID: "run-1", Profile: "dev", Status: state.StatusSuccess, StartedAt: start}))
+	require.NoError(t, db.CreateStep(state.Step{
+		ID: "s1", RunID: "run-1", ItemRef: "tools/jq", Name: "jq", Status: state.StatusSuccess,
+	}))
+	require.NoError(t, db.UpdateStepStatus("s1", state.StatusRunning, start, 0))
+	require.NoError(t, db.UpdateStepStatus("s1", state.StatusSuccess, fin, 0))
+
+	rec := do(t, h, http.MethodGet, "/api/v1/runs/run-1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Steps []struct {
+			StartedAt  string `json:"started_at"`
+			FinishedAt string `json:"finished_at"`
+		} `json:"steps"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Steps, 1)
+	assert.Equal(t, "2026-07-22T10:00:00Z", got.Steps[0].StartedAt,
+		"the UI needs per-step timings to show durations for a completed run")
+	assert.Equal(t, "2026-07-22T10:00:03Z", got.Steps[0].FinishedAt)
+}
