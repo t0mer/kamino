@@ -8,18 +8,25 @@ import { useRunStream } from "./useRunStream";
 import * as sse from "../api/sse";
 import type { StreamHandlers } from "../api/sse";
 
-// captureStream lets the test drive events into the hook by hand.
+// captureStream lets the test drive events into the hook by hand. It tracks
+// every connection's handlers (in order) so a test can target a specific
+// connection, e.g. to replay a log line on the reconnect after a drop.
 function captureStream() {
   let handlers: StreamHandlers | null = null;
+  const allHandlers: StreamHandlers[] = [];
   const cancel = vi.fn();
   vi.spyOn(sse, "streamRun").mockImplementation((_id, _tok, h) => {
     handlers = h;
+    allHandlers.push(h);
     return cancel;
   });
   return {
     emit: (e: object) => act(() => handlers!.onEvent(e as never)),
     drop: () => act(() => handlers!.onError(new Error("drop"))),
     close: () => act(() => handlers!.onClose()),
+    // emitOn drives an event into a specific connection by index (0 = first
+    // connect, 1 = first reconnect, ...), regardless of which is "current".
+    emitOn: (i: number, e: object) => act(() => allHandlers[i].onEvent(e as never)),
     cancel,
   };
 }
@@ -59,6 +66,24 @@ describe("useRunStream", () => {
     // The hook's reconnect delay is 1000ms, the same as waitFor's default
     // timeout — give it headroom so this isn't a race against that default.
     await waitFor(() => expect(sse.streamRun).toHaveBeenCalledTimes(2), { timeout: 2000 });
+  });
+
+  it("discards prior logs on reconnect so a replayed line is not duplicated", async () => {
+    const s = captureStream();
+    const { result } = renderHook(() => useRunStream("r"), { wrapper: wrapper() });
+
+    const line = { type: "log", run_id: "r", step_id: "tools/jq", line: "installing", ts: "t" };
+    s.emitOn(0, line);
+    await waitFor(() => expect(result.current.logs).toHaveLength(1));
+
+    s.drop();
+    await waitFor(() => expect(sse.streamRun).toHaveBeenCalledTimes(2), { timeout: 2000 });
+
+    // The server replays the full history on the new connection, so the
+    // same log line arrives again.
+    s.emitOn(1, line);
+    await waitFor(() => expect(result.current.logs).toHaveLength(1));
+    expect(result.current.logs[0].line).toBe("installing");
   });
 
   it("stops on a terminal close and does not reconnect", async () => {

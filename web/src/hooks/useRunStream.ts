@@ -12,10 +12,14 @@ export interface StreamState {
   reconnecting: boolean;
 }
 
-// useRunStream owns one run's live SSE lifecycle. It reconnects on a plain drop
-// (the server replays from sqlite, so a re-fetch catches up with no gap and no
-// duplicate) and stops on a terminal run event, refreshing the cached run so
-// History and the final state reflect reality.
+// useRunStream owns one run's live SSE lifecycle. It reconnects on a plain
+// drop (the server replays a run's full log history from sqlite on every new
+// connection, so a re-fetch catches up with no gap) and stops on a terminal
+// run event, refreshing the cached run so History and the final state
+// reflect reality. Because the replay resends every prior log line, `logs`
+// is reset on each connect (including reconnects) so the replay doesn't
+// duplicate lines already folded in; `steps` is left alone since step events
+// are keyed by step_id and fold idempotently overwrites them.
 export function useRunStream(runId: string): StreamState {
   const token = useApiToken();
   const qc = useQueryClient();
@@ -29,6 +33,7 @@ export function useRunStream(runId: string): StreamState {
     const onEvent = (e: ApiEvent) => setState((s) => fold(s, e));
 
     const connect = () => {
+      setState((s) => ({ ...s, logs: [] }));
       cancel = streamRun(runId, token, {
         onEvent,
         onClose: () => {
