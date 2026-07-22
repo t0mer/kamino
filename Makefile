@@ -14,6 +14,10 @@ vet:
 lint:
 	golangci-lint run
 
+.PHONY: ui
+ui:
+	./scripts/build-ui.sh
+
 .PHONY: smoke
 smoke:
 	./scripts/smoke.sh
