@@ -1,12 +1,16 @@
 name: Release
 
-# Releases are intentional: pushing a YYYY.M.PATCH tag (e.g. 2026.7.0) builds
-# the binaries and publishes the GitHub Release via goreleaser. Nothing runs on
-# an ordinary push.
+# Releases are intentional: this workflow runs only on manual dispatch. Leave
+# the version blank to auto-compute the next YYYY.M.PATCH from the latest tag,
+# or pass an explicit version. The job creates and pushes the tag, then
+# goreleaser builds the linux/amd64 + linux/arm64 binaries and publishes the
+# GitHub Release.
 on:
-  push:
-    tags:
-      - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (YYYY.M.PATCH). Blank = auto-compute from the latest tag."
+        required: false
 
 permissions:
   contents: write
@@ -17,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # goreleaser needs full history + tags for the changelog
+          fetch-depth: 0 # all tags: needed to compute the next version and the changelog
 
       - uses: actions/setup-go@v5
         with:
@@ -31,9 +35,35 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }} # via env (injection-safe)
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$(./scripts/next-version.sh)"
+          fi
+          [ -n "$VERSION" ] || { echo "::error::could not resolve a version"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HEAD is the tag we just pushed, so goreleaser releases exactly it.
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.version }}
