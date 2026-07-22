@@ -5,16 +5,28 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/t0mer/kamino/internal/download"
 	"github.com/t0mer/kamino/internal/events"
+	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/runmgr"
 	"github.com/t0mer/kamino/internal/server"
 	"github.com/t0mer/kamino/internal/state"
 )
 
-func newRunServer(t *testing.T) (http.Handler, *state.Store) {
+// newRunServer builds a server wired with a kexec.FakeExecutor and a
+// download.FakeDownloader (via server.Deps.Exec/Download), so a POST /runs
+// against the returned handler resolves entirely in memory. Without this, a
+// test that reaches runmgr.Start would run through runmgr's production
+// default — kexec.NewRealExecutor() — and genuinely shell out to apt-get as
+// root, against whatever the plan's items happen to be. The config repo the
+// plan is built from is arbitrary, untrusted input in production; a test
+// fixture is no different in kind, so no test in this package may be allowed
+// to reach the real executor.
+func newRunServer(t *testing.T) (http.Handler, *state.Store, *runmgr.Manager) {
 	t.Helper()
 	db, err := state.Open(filepath.Join(t.TempDir(), "k.db"))
 	require.NoError(t, err)
@@ -23,19 +35,35 @@ func newRunServer(t *testing.T) (http.Handler, *state.Store) {
 	bus := events.NewBus(events.DefaultBuffer)
 	t.Cleanup(bus.Close)
 
+	mgr := runmgr.New(db, bus, 50)
 	h := server.New(server.Deps{
 		DB:         db,
 		Bus:        bus,
-		Runs:       runmgr.New(db, bus, 50),
+		Runs:       mgr,
 		DataDir:    t.TempDir(),
 		APIToken:   testToken,
 		LoadConfig: loadFixtureConfig(t),
+		Exec:       kexec.NewFakeExecutor(),
+		Download:   download.NewFakeDownloader(),
 	}).Handler()
-	return h, db
+	return h, db, mgr
+}
+
+// waitIdle blocks until mgr reports no active run. Any test that drives a
+// POST /runs past validation must call this before returning: the run
+// executes on its own goroutine, and a still-running goroutine writing to
+// *state.Store after t.Cleanup closes it (see newRunServer) would spam
+// unrelated tests with "sql: database is closed" warnings.
+func waitIdle(t *testing.T, mgr *runmgr.Manager) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, busy := mgr.Active()
+		return !busy
+	}, 5*time.Second, 5*time.Millisecond, "the run must reach a terminal state before the test ends")
 }
 
 func TestListRunsIsEmptyInitially(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, _ := newRunServer(t)
 
 	rec := do(t, h, http.MethodGet, "/api/v1/runs", "")
 
@@ -46,7 +74,7 @@ func TestListRunsIsEmptyInitially(t *testing.T) {
 }
 
 func TestGetUnknownRunIs404(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, _ := newRunServer(t)
 
 	rec := do(t, h, http.MethodGet, "/api/v1/runs/nope", "")
 
@@ -54,41 +82,50 @@ func TestGetUnknownRunIs404(t *testing.T) {
 }
 
 func TestCreateRunMissingSecretIs422(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, db, mgr := newRunServer(t)
 
 	rec := do(t, h, http.MethodPost, "/api/v1/runs", `{"profile":"production","arch":"amd64"}`)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "CF_TUNNEL_TOKEN",
 		"the missing secret must be named, and named before anything is installed")
+
+	// The 422 must be returned before runmgr.Start is ever reached: no run
+	// slot was claimed, and nothing was persisted.
+	_, busy := mgr.Active()
+	assert.False(t, busy, "a missing-secret 422 must not have started a run")
+	runs, err := db.ListRuns(50)
+	require.NoError(t, err)
+	assert.Empty(t, runs, "a missing-secret 422 must not have persisted a run")
 }
 
 // TestCreateRunNeverEchoesASecret deliberately targets the "test" profile
-// (a single already-satisfied `jq` check, see testdata/config/profiles/test.yaml)
-// rather than "production". Unlike TestCreateRunMissingSecretIs422, this test
-// supplies every required secret, so validation passes and runmgr.Start
-// actually launches a real background run against the real command executor.
-// "production" pulls in tools/docker (a get.docker.com curl-pipe-sh install),
-// tools/docker-compose and network/cloudflared (a real .deb download) — real
-// installs and system service changes too heavy and intrusive to trigger from
-// a unit test. "test" only resolves to tools/jq, whose `check`/`check_contains`
-// (see testdata/config/categories/tools.yaml) is satisfied by jq already being
-// present on the test host, so the run completes as an idempotency no-op
-// without installing anything. The supplied secret name (CF_TUNNEL_TOKEN) is
-// not even declared by this profile's items — Missing() only checks names the
-// plan actually declares — which makes the assertion strictly more general:
-// it must hold even for a secret nothing in the plan asked for.
+// (a single `jq` item, see testdata/config/profiles/test.yaml) rather than
+// "production". Unlike TestCreateRunMissingSecretIs422, this test supplies
+// every required secret, so validation passes and runmgr.Start actually
+// launches a background run — but newRunServer wires it with a
+// kexec.FakeExecutor and a download.FakeDownloader, so the run resolves
+// entirely in memory: no apt-get, no curl-pipe-sh, no real .deb download,
+// regardless of which profile is selected. "production" pulls in heavier
+// items (tools/docker, network/cloudflared) that would be a poor fit for a
+// unit test even against a fake, so "test" (tools/jq only) is used here; that
+// choice is no longer load-bearing for safety the way it was when this test
+// ran against the real executor. The supplied secret name (CF_TUNNEL_TOKEN)
+// is not even declared by this profile's items — Missing() only checks names
+// the plan actually declares — which makes the assertion strictly more
+// general: it must hold even for a secret nothing in the plan asked for.
 func TestCreateRunNeverEchoesASecret(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, mgr := newRunServer(t)
 
 	rec := do(t, h, http.MethodPost, "/api/v1/runs",
 		`{"profile":"test","arch":"amd64","secrets":{"CF_TUNNEL_TOKEN":"sup3rs3cret"}}`)
 
 	assert.NotContains(t, rec.Body.String(), "sup3rs3cret")
+	waitIdle(t, mgr)
 }
 
 func TestCreateRunUnknownProfileIs404(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, _ := newRunServer(t)
 
 	rec := do(t, h, http.MethodPost, "/api/v1/runs", `{"profile":"nope"}`)
 
@@ -96,7 +133,7 @@ func TestCreateRunUnknownProfileIs404(t *testing.T) {
 }
 
 func TestCreateRunMalformedBodyIs400(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, _ := newRunServer(t)
 
 	rec := do(t, h, http.MethodPost, "/api/v1/runs", "{not json")
 
@@ -104,7 +141,7 @@ func TestCreateRunMalformedBodyIs400(t *testing.T) {
 }
 
 func TestCancelUnknownRunIs404(t *testing.T) {
-	h, _ := newRunServer(t)
+	h, _, _ := newRunServer(t)
 
 	rec := do(t, h, http.MethodPost, "/api/v1/runs/nope/cancel", "")
 
@@ -112,7 +149,7 @@ func TestCancelUnknownRunIs404(t *testing.T) {
 }
 
 func TestGetRunReturnsItsSteps(t *testing.T) {
-	h, db := newRunServer(t)
+	h, db, _ := newRunServer(t)
 
 	require.NoError(t, db.CreateRun(state.Run{ID: "run-1", Profile: "dev", Status: state.StatusSuccess}))
 	require.NoError(t, db.CreateStep(state.Step{
