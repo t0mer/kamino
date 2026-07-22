@@ -33,6 +33,27 @@ import (
 // install would block or corrupt the first rather than working.
 var ErrRunInProgress = errors.New("a run is already in progress")
 
+// RunInProgressError reports that a run is already executing and names the
+// active run's id. Start returns this (rather than the bare ErrRunInProgress)
+// so a caller can report which run is busy without a second, racy call to
+// Active() — the active run may have already finished by the time such a
+// follow-up call happened, leaving nothing to name.
+//
+// RunInProgressError unwraps to ErrRunInProgress, so existing callers using
+// errors.Is(err, ErrRunInProgress) keep working unchanged.
+type RunInProgressError struct {
+	// ActiveID is the id of the run that is currently executing.
+	ActiveID string
+}
+
+// Error renders the same text Start has always produced for this condition.
+func (e *RunInProgressError) Error() string {
+	return fmt.Sprintf("%s: %s", ErrRunInProgress, e.ActiveID)
+}
+
+// Unwrap exposes ErrRunInProgress so errors.Is(err, ErrRunInProgress) matches.
+func (e *RunInProgressError) Unwrap() error { return ErrRunInProgress }
+
 // StartRequest is everything needed to execute one plan.
 type StartRequest struct {
 	Plan            *plan.Plan
@@ -40,6 +61,18 @@ type StartRequest struct {
 	Secrets         *secrets.Store
 	ContinueOnError bool
 	ConfigSource    runners.ScriptSource
+
+	// Exec, when non-nil, replaces kexec.NewRealExecutor() as the command
+	// executor the run's steps execute through. Production leaves this nil
+	// so every run uses the real executor exactly as before; tests inject a
+	// kexec.FakeExecutor so a run resolves entirely in memory — the config
+	// repo is untrusted input and its steps run as root, so nothing outside
+	// this package's own tests should ever cause a real command to execute.
+	Exec kexec.CommandExecutor
+	// Download, when non-nil, replaces download.NewHTTPDownloader(nil) as
+	// the artifact fetcher the run's steps use. Production leaves this nil;
+	// tests inject a download.FakeDownloader for the same reason as Exec.
+	Download download.Downloader
 }
 
 // runStepWriter is the subset of *state.Store that persist needs to create a
@@ -92,7 +125,7 @@ func (m *Manager) Start(ctx context.Context, req StartRequest) (string, error) {
 	if m.active != "" {
 		busy := m.active
 		m.mu.Unlock()
-		return "", fmt.Errorf("%w: %s", ErrRunInProgress, busy)
+		return "", &RunInProgressError{ActiveID: busy}
 	}
 	m.active = runID
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -200,9 +233,17 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
+	exec := req.Exec
+	if exec == nil {
+		exec = kexec.NewRealExecutor()
+	}
+	dl := req.Download
+	if dl == nil {
+		dl = download.NewHTTPDownloader(nil)
+	}
 	deps := runners.Deps{
-		Exec:     kexec.NewRealExecutor(),
-		Download: download.NewHTTPDownloader(nil),
+		Exec:     exec,
+		Download: dl,
 		TempDir:  tempDir,
 	}
 
