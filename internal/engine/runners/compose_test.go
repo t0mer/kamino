@@ -120,14 +120,21 @@ func TestComposeNoComposeFileAmongFilesIsAnError(t *testing.T) {
 }
 
 func TestComposeRejectsTraversalFileEntry(t *testing.T) {
-	d, _, _ := depsWithDownloader(t)
-	src := &fakeSource{files: map[string]string{}}
+	d, fake, _ := depsWithDownloader(t)
+	src := &fakeSource{files: map[string]string{
+		"stacks/monitoring/docker-compose.yaml": composeYAML,
+	}}
 	it := composeItem()
-	it.Files = []string{"../../etc/evil.yaml"}
+	// A legitimate compose file plus a traversal entry: Install must reach the
+	// per-file guard (safeStackFile) and refuse the escaping entry, not bail out
+	// earlier for lack of a compose file.
+	it.Files = []string{"docker-compose.yaml", "../../etc/evil.yaml"}
 
 	err := runners.NewCompose(d, src, "abc123", fakeSecrets{}).Install(context.Background(), it)
 	require.Error(t, err)
-	assert.Empty(t, src.fetched, "an unsafe file entry must be rejected before fetching")
+	assert.Contains(t, err.Error(), "outside the stack dir",
+		"the escaping entry must be rejected by the traversal guard")
+	assert.Empty(t, fake.Calls(), "no docker compose command may run when a file entry is unsafe")
 }
 
 func TestComposeFetchFailureNamesThePath(t *testing.T) {

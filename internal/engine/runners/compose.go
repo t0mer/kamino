@@ -153,6 +153,9 @@ func safeStackDir(tempDir string, it ResolvedItem) (string, error) {
 // climbs out with "..").
 func safeStackFile(stackDir string, it ResolvedItem, file string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(file))
+	if clean == "." || clean == "" {
+		return "", fmt.Errorf("%s: refusing an empty file entry", it.Ref)
+	}
 	if filepath.IsAbs(clean) {
 		return "", fmt.Errorf("%s: refusing an absolute file entry %q", it.Ref, file)
 	}
