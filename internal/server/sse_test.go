@@ -184,3 +184,54 @@ func readSSE(t *testing.T, resp *http.Response) string {
 	}
 	return sb.String()
 }
+
+// TestEventsDoesNotReplayThenAlsoDeliverTheSameLine pins the replay watermark.
+//
+// A step transition and log line are persisted (so replay renders them) AND an
+// event bearing an old timestamp is published live for the same content. The
+// stream must show that line exactly once: an event at or before the replay
+// watermark is already covered by the replay and must be dropped live, or the
+// UI double-prints. A genuinely newer live line must still get through.
+func TestEventsDoesNotReplayThenAlsoDeliverTheSameLine(t *testing.T) {
+	srv, db, bus := newSSEServer(t)
+
+	now := time.Now().UTC()
+	require.NoError(t, db.CreateRun(state.Run{
+		ID: "run-1", Profile: "dev", Status: state.StatusRunning, StartedAt: now,
+	}))
+	require.NoError(t, db.CreateStep(state.Step{
+		ID: "s1", RunID: "run-1", ItemRef: "tools/jq", Name: "jq", Status: state.StatusRunning,
+	}))
+	require.NoError(t, db.AppendLog("s1", now, "stdout", "persisted line"))
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/runs/run-1/events", nil)
+	require.NoError(t, err)
+	req.Header.Set(server.TokenHeader, testToken)
+
+	resp, err := srv.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		// A stale duplicate: same content, timestamp from before the stream
+		// connected, i.e. at or before the replay watermark. Must be dropped.
+		bus.Publish(events.Event{
+			Type: events.EventLog, RunID: "run-1", StepID: "tools/jq",
+			Stream: "stdout", Line: "persisted line", TS: now,
+		})
+		// A genuinely new line, stamped now. Must get through.
+		bus.Publish(events.Event{
+			Type: events.EventLog, RunID: "run-1", StepID: "tools/jq",
+			Stream: "stdout", Line: "fresh line", TS: time.Now().UTC().Add(time.Hour),
+		})
+		time.Sleep(50 * time.Millisecond)
+		bus.Publish(events.Event{Type: events.EventRun, RunID: "run-1", Status: string(state.StatusSuccess)})
+	}()
+
+	body := readSSE(t, resp)
+
+	assert.Equal(t, 1, strings.Count(body, "persisted line"),
+		"a line that was replayed must not also be delivered live")
+	assert.Contains(t, body, "fresh line", "a genuinely new live line must still get through")
+}

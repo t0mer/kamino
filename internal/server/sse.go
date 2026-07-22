@@ -27,15 +27,21 @@ const heartbeatInterval = 20 * time.Second
 func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	run, steps, err := s.d.DB.GetRun(id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "run "+id+" not found")
-		return
-	}
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	// Subscribe BEFORE reading the replay snapshot from sqlite: an event
+	// published between the read and the subscription would otherwise fall in
+	// the gap and be lost entirely.
+	ch, unsub := s.d.Bus.Subscribe(id)
+	defer unsub()
+
+	run, steps, err := s.d.DB.GetRun(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "run "+id+" not found")
 		return
 	}
 
@@ -44,11 +50,6 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-
-	// Subscribe BEFORE replaying: an event published while we are reading
-	// sqlite would otherwise fall between the two and be lost entirely.
-	ch, unsub := s.d.Bus.Subscribe(id)
-	defer unsub()
 
 	send := func(e events.Event) bool {
 		payload, err := json.Marshal(e)
@@ -62,7 +63,24 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	for _, e := range replay(s.d.DB, run, steps) {
+	replayed := replay(s.d.DB, run, steps)
+
+	// Watermark, captured the instant the replay snapshot is complete. Because
+	// the engine's MultiSink persists a step before it publishes it, any live
+	// event already reflected in the snapshot was published before this moment
+	// and carries a bus timestamp at or before it. Dropping those live events
+	// stops the replay and the live stream from double-delivering the same log
+	// line — a visible double-print in the UI. Events published after the
+	// watermark are genuinely new and always pass.
+	//
+	// The window this leaves open is the sub-microsecond gap between the last
+	// snapshot read and this call: an event whose whole persist-then-publish
+	// cycle lands there could be dropped though it was not in the snapshot. On
+	// real hardware that is vanishingly unlikely, and the failure is a single
+	// missing line, never a stall.
+	cutoff := time.Now().UTC()
+
+	for _, e := range replayed {
 		if !send(e) {
 			return
 		}
@@ -82,6 +100,10 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 		case e, open := <-ch:
 			if !open {
 				return
+			}
+			// Drop anything already covered by the replay snapshot.
+			if !e.TS.After(cutoff) {
+				continue
 			}
 			if !send(e) {
 				return
