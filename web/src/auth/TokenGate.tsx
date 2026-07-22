@@ -3,7 +3,7 @@ import { apiFetch, ApiError } from "../api/client";
 import type { SystemInfo } from "../api/types";
 import { onAuthFailed, useToken } from "./useToken";
 
-type Status = "checking" | "authed" | "needsToken" | "rejected";
+type Status = "checking" | "authed" | "needsToken" | "rejected" | "unreachable";
 
 // TokenGate stands in front of the whole app. This API installs software as
 // root; nothing renders until a valid token is held. The token is printed once
@@ -20,7 +20,12 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
       setStatus("authed");
     } catch (err) {
       clear();
-      setStatus(err instanceof ApiError && err.status === 401 ? "rejected" : "rejected");
+      // Distinguish "the server rejected this token" (a real 401) from "the
+      // server could not be reached at all" (a network error, or a proxy
+      // returning a 5xx). Showing "token rejected" for an unreachable server
+      // sends the operator chasing a credential problem that isn't there.
+      const rejected = err instanceof ApiError && err.status === 401;
+      setStatus(rejected ? "rejected" : "unreachable");
     }
   }, [save, clear]);
 
@@ -59,6 +64,9 @@ export function TokenGate({ children }: { children: React.ReactNode }) {
         />
         {status === "rejected" && (
           <p className="text-sm text-red-600">That token was rejected. Check the serve output and try again.</p>
+        )}
+        {status === "unreachable" && (
+          <p className="text-sm text-red-600">Could not reach the server. Is <code>kamino serve</code> still running?</p>
         )}
         <button type="submit" className="w-full rounded bg-primary px-3 py-2 text-primary-foreground">
           Connect

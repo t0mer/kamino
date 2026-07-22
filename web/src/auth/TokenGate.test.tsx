@@ -62,3 +62,16 @@ describe("TokenGate", () => {
     expect(screen.queryByText("secret app")).not.toBeInTheDocument();
   });
 });
+
+  it("distinguishes an unreachable server from a rejected token", async () => {
+    // A network failure (not an ApiError 401) must not be reported as a bad
+    // token — that sends the operator chasing the wrong problem.
+    vi.spyOn(client, "apiFetch").mockRejectedValue(new Error("Failed to fetch"));
+    render(<TokenGate><div>secret app</div></TokenGate>);
+
+    await userEvent.type(await screen.findByLabelText(/api token/i), "whatever");
+    await userEvent.click(screen.getByRole("button", { name: /connect/i }));
+
+    expect(await screen.findByText(/could not reach the server/i)).toBeInTheDocument();
+    expect(screen.queryByText(/rejected/i)).not.toBeInTheDocument();
+  });
