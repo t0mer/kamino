@@ -69,6 +69,15 @@ export function streamRun(runId: string, token: string, h: StreamHandlers): () =
     } catch (err) {
       if (!ac.signal.aborted) h.onError(err);
       return;
+    } finally {
+      // Release the reader on every exit — natural close, error, or abort — so
+      // a run stream never leaves a locked reader behind. abort() already tears
+      // down the body; this is hygiene, hence the swallow if it is already gone.
+      try {
+        reader.releaseLock();
+      } catch {
+        /* already released, or a read was still pending after abort */
+      }
     }
 
     if (ac.signal.aborted) return;
