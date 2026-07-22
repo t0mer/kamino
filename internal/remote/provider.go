@@ -43,7 +43,11 @@ func ParseRepo(repoURL, ref, rawBaseTemplate string) (*Repo, error) {
 	}
 	u, err := url.Parse(repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("parsing repo URL %q: %w", repoURL, err)
+		// Neither the raw URL nor the wrapped url.Error is echoed: a repo URL
+		// can legitimately carry a credential in its userinfo or query
+		// (https://user:token@host/…), and this error reaches an HTTP response
+		// and any logs behind it. Report that it was unparseable, not what.
+		return nil, fmt.Errorf("repo URL is not a valid URL")
 	}
 	if u.Scheme != "https" {
 		return nil, fmt.Errorf("repo URL must use https, got %q", u.Scheme)

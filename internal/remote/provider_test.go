@@ -171,3 +171,14 @@ func TestAuthHeaderAbsentWithoutToken(t *testing.T) {
 	_, _, ok := r.AuthHeader()
 	assert.False(t, ok)
 }
+
+func TestParseRepoDoesNotEchoACredentialInAParseError(t *testing.T) {
+	// A control character makes url.Parse fail. The URL carries a token in its
+	// userinfo, which must not surface in the error — it reaches an HTTP
+	// response and the logs behind it.
+	_, err := remote.ParseRepo("https://user:sup3rs3cret@host\x7f/o/r", "main", "")
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sup3rs3cret",
+		"a credential embedded in the URL must not be echoed in the error")
+}
