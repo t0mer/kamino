@@ -12,8 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/t0mer/kamino/internal/download"
 	"github.com/t0mer/kamino/internal/engine/runners"
 	"github.com/t0mer/kamino/internal/events"
+	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/runmgr"
 	"github.com/t0mer/kamino/internal/state"
@@ -32,6 +34,17 @@ type Deps struct {
 	// ConfigSource fetches script/stack files from the configured repo for
 	// handlers that need to hand them to the engine (Task 8).
 	ConfigSource runners.ScriptSource
+	// Exec, when non-nil, is threaded into every run's runmgr.StartRequest
+	// as the command executor. Left nil in production wiring, so runs
+	// execute through the real executor exactly as before; tests set a
+	// kexec.FakeExecutor so a POST /runs in this package's tests never
+	// shells out to the host (the config repo is untrusted and its steps
+	// run as root — see runmgr.StartRequest.Exec).
+	Exec kexec.CommandExecutor
+	// Download, when non-nil, is threaded into every run's
+	// runmgr.StartRequest as the artifact downloader. Left nil in
+	// production; tests set a download.FakeDownloader.
+	Download download.Downloader
 }
 
 // Server serves the JSON API.

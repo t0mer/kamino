@@ -98,10 +98,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Secrets:         store,
 		ContinueOnError: req.ContinueOnError,
 		ConfigSource:    s.d.ConfigSource,
+		Exec:            s.d.Exec,
+		Download:        s.d.Download,
 	})
-	if errors.Is(err, runmgr.ErrRunInProgress) {
-		active, _ := s.d.Runs.Active()
-		writeError(w, http.StatusConflict, "a run is already in progress", active)
+	var busy *runmgr.RunInProgressError
+	if errors.As(err, &busy) {
+		writeError(w, http.StatusConflict, "a run is already in progress", busy.ActiveID)
 		return
 	}
 	if err != nil {
