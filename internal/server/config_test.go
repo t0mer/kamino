@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,4 +162,29 @@ func TestPostPlanDefaultsArchToTheHost(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.NotEmpty(t, got.Arch)
+}
+
+func TestGetConfigIncludesFetchedAtWhenKnown(t *testing.T) {
+	fetched := time.Date(2026, 7, 20, 14, 22, 0, 0, time.UTC)
+	load := func(context.Context) (*manifest.Resolved, error) {
+		return &manifest.Resolved{
+			Manifest:  manifest.Manifest{Schema: 1, Name: "t"},
+			SHA:       "abc",
+			Stale:     true,
+			FetchedAt: fetched,
+		}, nil
+	}
+	h := server.New(server.Deps{DataDir: t.TempDir(), APIToken: testToken, LoadConfig: load}).Handler()
+
+	rec := do(t, h, http.MethodGet, "/api/v1/config", "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Stale     bool   `json:"stale"`
+		FetchedAt string `json:"fetched_at"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.True(t, got.Stale)
+	assert.Equal(t, "2026-07-20T14:22:00Z", got.FetchedAt,
+		"the UI pairs fetched_at with stale to show how old the cached config is")
 }

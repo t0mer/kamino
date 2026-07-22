@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"time"
 
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/plan"
@@ -33,9 +34,14 @@ type configProfile struct {
 }
 
 type configResponse struct {
-	Name       string           `json:"name"`
-	SHA        string           `json:"sha"`
-	Stale      bool             `json:"stale"`
+	Name  string `json:"name"`
+	SHA   string `json:"sha"`
+	Stale bool   `json:"stale"`
+	// FetchedAt is when this config was retrieved. The UI pairs it with Stale
+	// to show "stale config (SHA …, fetched …)" when a fetch fell back to the
+	// cache, so an operator knows how old the repo they are about to install
+	// from actually is.
+	FetchedAt  string           `json:"fetched_at,omitempty"`
 	Categories []configCategory `json:"categories"`
 	Profiles   []configProfile  `json:"profiles"`
 	Warnings   []string         `json:"warnings,omitempty"`
@@ -65,6 +71,9 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		Name:  resolved.Manifest.Name,
 		SHA:   resolved.SHA,
 		Stale: resolved.Stale,
+	}
+	if !resolved.FetchedAt.IsZero() {
+		out.FetchedAt = resolved.FetchedAt.UTC().Format(time.RFC3339)
 	}
 	for _, w := range problems.Warnings() {
 		out.Warnings = append(out.Warnings, w.String())
