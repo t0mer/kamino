@@ -48,7 +48,7 @@ func loadConfig(ctx context.Context) (*manifest.Resolved, error) {
 	settings := config.Resolve(saved, config.Overrides{
 		RepoURL:         flags.repo,
 		Ref:             flags.ref,
-		Token:           flags.token,
+		RepoToken:       flags.token,
 		RawBaseTemplate: flags.rawBase,
 	})
 	if !settings.Configured() {
@@ -59,7 +59,7 @@ func loadConfig(ctx context.Context) (*manifest.Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	repo.Token = settings.Token
+	repo.Token = settings.RepoToken
 
 	sha, err := remote.NewAPIPinner(nil, "").Pin(ctx, repo)
 	if err != nil {
@@ -112,14 +112,14 @@ func configSource(_ context.Context) runners.ScriptSource {
 	settings := config.Resolve(saved, config.Overrides{
 		RepoURL:         flags.repo,
 		Ref:             flags.ref,
-		Token:           flags.token,
+		RepoToken:       flags.token,
 		RawBaseTemplate: flags.rawBase,
 	})
 	repo, err := remote.ParseRepo(settings.RepoURL, settings.Ref, settings.RawBaseTemplate)
 	if err != nil {
 		return errSource{err: fmt.Errorf("resolving config repo: %w", err)}
 	}
-	repo.Token = settings.Token
+	repo.Token = settings.RepoToken
 	return remote.NewHTTPFetcher(repo, filepath.Join(flags.dataDir, "cache"), nil)
 }
 
