@@ -8,6 +8,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/runmgr"
 	"github.com/t0mer/kamino/internal/state"
+	"github.com/t0mer/kamino/internal/webui"
 )
 
 // Deps are the collaborators a Server needs.
@@ -83,6 +85,15 @@ func (s *Server) Handler() http.Handler {
 		api.Get("/runs/{id}/events", s.handleRunEvents)
 		api.Post("/runs/{id}/cancel", s.handleCancelRun)
 	})
+
+	// Mount the embedded UI as the catch-all. It runs only for paths the API
+	// routes above did not match, so it can never shadow /api or /healthz. A
+	// missing build is logged once and the API keeps serving.
+	if ui, err := webui.Handler(); err != nil {
+		slog.Warn("web ui not served", "error", err)
+	} else {
+		r.Handle("/*", ui)
+	}
 
 	return r
 }
