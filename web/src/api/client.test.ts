@@ -65,3 +65,24 @@ describe("apiFetch", () => {
     expect(JSON.parse(init.body)).toEqual({ repo_url: "x" });
   });
 });
+
+describe("apiFetch empty body", () => {
+  it("returns an empty object rather than throwing on an empty success body", async () => {
+    // A 202/204 can legitimately carry no body. JSON.parse("") throws, so the
+    // guard must short-circuit — without it this test's request rejects.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: () => Promise.reject(new Error("no body")),
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const got = await apiFetch<Record<string, unknown>>("/api/v1/runs", {
+      method: "POST",
+      body: { profile: "test" },
+      token: "t",
+    });
+    expect(got).toEqual({});
+  });
+});
