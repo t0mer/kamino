@@ -1,23 +1,16 @@
 import { useEffect, useState } from "react";
 import { Button } from "./ui/button";
-
-type Theme = "dark" | "light";
-
-function initialTheme(): Theme {
-  const saved = localStorage.getItem("kamino_theme");
-  if (saved === "light" || saved === "dark") return saved;
-  // Default dark, but respect an explicit light system preference on first run.
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
+import { applyTheme, resolveTheme, type Theme } from "../lib/theme";
 
 // ThemeToggle flips the root `dark` class Tailwind keys off, persisting the
-// choice. Dark is the default per the spec.
+// choice. Dark is the default per the spec; the initial application happens at
+// startup in main.tsx so the pre-auth token gate is themed too — this component
+// only owns the interactive toggle.
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [theme, setTheme] = useState<Theme>(resolveTheme);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("kamino_theme", theme);
+    applyTheme(theme);
   }, [theme]);
 
   return (
