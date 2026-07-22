@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { streamRun } from "./sse";
+import * as auth from "../auth/useToken";
 import type { ApiEvent } from "./types";
 
 // makeStream turns an array of string chunks into a fetch Response whose body
@@ -115,6 +116,18 @@ describe("streamRun", () => {
 
     streamRun("r", "tok", c.handlers);
     await vi.waitFor(() => expect(c.error).not.toBeNull());
+  });
+
+  it("re-gates via authFailed on a 401 and does not call onError", async () => {
+    const authFailedSpy = vi.spyOn(auth, "authFailed").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401, body: null }));
+    const c = collect();
+
+    streamRun("r", "tok", c.handlers);
+    await vi.waitFor(() => expect(authFailedSpy).toHaveBeenCalledTimes(1));
+
+    expect(c.error).toBeNull();
+    expect(c.closed).toBe(false);
   });
 
   it("preserves a masked secret verbatim", async () => {

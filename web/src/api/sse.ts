@@ -1,3 +1,4 @@
+import { authFailed } from "../auth/useToken";
 import type { ApiEvent } from "./types";
 
 export interface StreamHandlers {
@@ -27,6 +28,13 @@ export function streamRun(runId: string, token: string, h: StreamHandlers): () =
       });
     } catch (err) {
       if (!ac.signal.aborted) h.onError(err);
+      return;
+    }
+
+    if (res.status === 401) {
+      // A rotated/invalidated token must re-gate immediately, not spin a
+      // reconnect loop — don't call onError so the hook does not retry.
+      authFailed();
       return;
     }
 
