@@ -35,6 +35,8 @@ type ResolvedItem struct {
 	PathExport    string
 	Path          string
 	Files         []string
+	EnvFile       string
+	Secrets       []string
 	Check         string
 	CheckContains string
 	PreInstall    []string

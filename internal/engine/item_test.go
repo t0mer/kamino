@@ -135,3 +135,21 @@ func TestResolveNilStoreWithSecretErrorsRatherThanPanicking(t *testing.T) {
 	assert.Contains(t, err.Error(), "CF_TUNNEL_TOKEN")
 	assert.Contains(t, err.Error(), "network/cloudflared")
 }
+
+func TestResolvePopulatesComposeFields(t *testing.T) {
+	it := manifest.Item{
+		CategoryID: "containers", ID: "monitoring",
+		Type:    manifest.ItemComposeStack,
+		Path:    "stacks/monitoring",
+		Files:   []string{"docker-compose.yaml", "prometheus.yml"},
+		EnvFile: "optional",
+		Secrets: []string{"CF_TUNNEL_TOKEN"},
+	}
+
+	got, err := engine.Resolve(it, "amd64", manifest.Defaults{}, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "optional", got.EnvFile)
+	assert.Equal(t, []string{"CF_TUNNEL_TOKEN"}, got.Secrets)
+	assert.Equal(t, []string{"docker-compose.yaml", "prometheus.yml"}, got.Files)
+}
