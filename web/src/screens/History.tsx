@@ -35,9 +35,25 @@ function runDuration(startedAt: string, finishedAt?: string): string | null {
 }
 
 export function History() {
-  const { data: runs } = useRuns();
+  const { data: runs, isLoading } = useRuns();
 
-  if (!runs || runs.length === 0) {
+  // Distinguish "still loading" (data undefined) from "genuinely no runs" (empty
+  // array). Treating both as empty flashed "No runs yet." for a beat on every
+  // load before the list appeared.
+  if (isLoading || !runs) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Run History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground">Loading…</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (runs.length === 0) {
     return (
       <Card>
         <CardHeader>
