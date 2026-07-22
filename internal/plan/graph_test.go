@@ -1,6 +1,7 @@
 package plan_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,4 +128,22 @@ func TestBuildWarnsOnMissingChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, got.Warnings)
 	assert.Contains(t, got.Warnings[0], "sha256")
+}
+
+func TestBuildWarnsOnComposeStack(t *testing.T) {
+	r := loadFixture(t)
+
+	got, err := plan.Build(r, manifest.Profile{ID: "x", Include: []string{"tools/monitoring-stack"}}, "amd64")
+
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Warnings)
+	// Find the warning for the compose_stack (other deps may have warnings too)
+	var found string
+	for _, w := range got.Warnings {
+		if strings.Contains(w, "tools/monitoring-stack") && strings.Contains(w, "docker compose") {
+			found = w
+			break
+		}
+	}
+	require.NotEmpty(t, found, "expected warning for compose_stack not found in %v", got.Warnings)
 }

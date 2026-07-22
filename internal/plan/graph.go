@@ -69,6 +69,8 @@ func warningsFor(it manifest.Item, arch string) []string {
 		}
 	case manifest.ItemScript:
 		out = append(out, fmt.Sprintf("%s: runs a shell script as root from %s", it.Ref(), it.Source[arch]))
+	case manifest.ItemComposeStack:
+		out = append(out, fmt.Sprintf("%s: runs a docker compose stack as root (docker compose up -d)", it.Ref()))
 	}
 	return out
 }
