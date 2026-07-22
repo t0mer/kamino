@@ -260,7 +260,8 @@ will be added here._
 
 ## Building from source
 
-Requires Go (see `go.mod` for the version) and Node 20 for the web UI.
+Requires Go (see `go.mod` for the version) and Node 24 for the web UI (its
+tooling needs Node ≥22; `package-lock.json` is generated with npm 11).
 
 ```bash
 make ui       # build the React app into internal/webui/dist (go:embed source)

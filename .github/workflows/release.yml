@@ -28,10 +28,13 @@ jobs:
           go-version-file: go.mod
 
       # The single binary embeds the web UI; goreleaser's before-hook runs
-      # scripts/build-ui.sh, which needs Node.
+      # scripts/build-ui.sh, which needs Node. Node 24: the frontend's own
+      # devDependencies require >=22 and package-lock.json was generated with
+      # npm 11, so `npm ci` is only in sync on that major (Node 20 fails with
+      # missing @emnapi/* optional deps).
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
