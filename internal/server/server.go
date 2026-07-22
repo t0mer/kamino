@@ -47,6 +47,11 @@ type Deps struct {
 	// runmgr.StartRequest as the artifact downloader. Left nil in
 	// production; tests set a download.FakeDownloader.
 	Download download.Downloader
+	// Metrics, when non-nil, is served at /metrics in the Prometheus text
+	// format. It sits outside the authenticated group so a scraper reaches
+	// it without the API token, like /healthz. Left nil in tests that don't
+	// exercise metrics; the route is then simply not mounted.
+	Metrics http.Handler
 }
 
 // Server serves the JSON API.
@@ -65,6 +70,13 @@ func (s *Server) Handler() http.Handler {
 	r.Use(middleware.RealIP)
 
 	r.Get("/healthz", s.handleHealthz)
+
+	// /metrics is unauthenticated for the same reason as /healthz: a
+	// Prometheus scraper is infrastructure, not an API client, and the
+	// series carry no secrets — only run/step counts and durations.
+	if s.d.Metrics != nil {
+		r.Handle("/metrics", s.d.Metrics)
+	}
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(RequireToken(s.d.APIToken))

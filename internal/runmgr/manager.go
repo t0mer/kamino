@@ -23,6 +23,7 @@ import (
 	"github.com/t0mer/kamino/internal/events"
 	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/manifest"
+	"github.com/t0mer/kamino/internal/metrics"
 	"github.com/t0mer/kamino/internal/plan"
 	"github.com/t0mer/kamino/internal/secrets"
 	"github.com/t0mer/kamino/internal/state"
@@ -93,6 +94,11 @@ type Manager struct {
 	bus      *events.Bus
 	keepRuns int
 
+	// metrics, when set via WithMetrics, records run and step counters for
+	// the Prometheus endpoint. Left nil in tests and in the headless CLI,
+	// where there is no /metrics endpoint to serve; every use is nil-guarded.
+	metrics *metrics.Metrics
+
 	// runnerLookup, when set, replaces engine.NewRegistry for the run. It
 	// exists solely so tests in this package can inject a runner that
 	// misbehaves (e.g. panics) without widening the public StartRequest API.
@@ -107,6 +113,15 @@ type Manager struct {
 // New builds a manager persisting to db and publishing to bus.
 func New(db *state.Store, bus *events.Bus, keepRuns int) *Manager {
 	return &Manager{db: db, writer: db, bus: bus, keepRuns: keepRuns}
+}
+
+// WithMetrics attaches a metrics recorder and returns the manager for
+// chaining. The serve command sets it so runs feed the /metrics endpoint;
+// callers that don't (tests, headless apply) leave it off and metering is a
+// no-op.
+func (m *Manager) WithMetrics(mx *metrics.Metrics) *Manager {
+	m.metrics = mx
+	return m
 }
 
 // Active reports the in-flight run's id, if any.
@@ -245,13 +260,18 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 		lookup = engine.NewRegistry(deps, req.ConfigSource, req.Plan.ConfigSHA, req.Secrets)
 	}
 
+	sinks := []engine.Sink{
+		state.NewSink(m.db, stepIDs),
+		events.NewSink(m.bus),
+	}
+	if m.metrics != nil {
+		sinks = append(sinks, m.metrics.NewStepSink())
+	}
+
 	eng := engine.New(
 		deps.Exec,
 		lookup,
-		engine.NewMultiSink(
-			state.NewSink(m.db, stepIDs),
-			events.NewSink(m.bus),
-		),
+		engine.NewMultiSink(sinks...),
 		engine.Options{
 			ContinueOnError: req.ContinueOnError,
 			AptUpdate:       req.Resolved.Manifest.Defaults.AptUpdateBeforeRun,
@@ -273,6 +293,9 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 	}
 	if err := m.db.Prune(m.keepRuns); err != nil {
 		slog.Warn("pruning old run history failed", "error", err)
+	}
+	if m.metrics != nil {
+		m.metrics.RunFinished(status)
 	}
 
 	m.bus.Publish(events.Event{Type: events.EventRun, RunID: runID, Status: string(status)})
@@ -300,6 +323,9 @@ func (m *Manager) recoverFromPanic(runID string) {
 	slog.Error("run panicked", "run_id", runID, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
 	if err := m.db.FinishRun(runID, state.StatusFailed, time.Now().UTC()); err != nil {
 		slog.Warn("recording run completion after panic failed", "run_id", runID, "error", err)
+	}
+	if m.metrics != nil {
+		m.metrics.RunFinished(state.StatusFailed)
 	}
 	m.bus.Publish(events.Event{Type: events.EventRun, RunID: runID, Status: string(state.StatusFailed)})
 }

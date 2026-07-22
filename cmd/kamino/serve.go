@@ -16,6 +16,7 @@ import (
 	"github.com/t0mer/kamino/internal/config"
 	"github.com/t0mer/kamino/internal/events"
 	"github.com/t0mer/kamino/internal/manifest"
+	"github.com/t0mer/kamino/internal/metrics"
 	"github.com/t0mer/kamino/internal/runmgr"
 	"github.com/t0mer/kamino/internal/server"
 	"github.com/t0mer/kamino/internal/state"
@@ -58,12 +59,15 @@ func runServe(cmd *cobra.Command, listen string) error {
 	bus := events.NewBus(events.DefaultBuffer)
 	defer bus.Close()
 
+	mx := metrics.New()
+
 	srv := server.New(server.Deps{
 		DB:           db,
 		Bus:          bus,
-		Runs:         runmgr.New(db, bus, DefaultKeepRuns),
+		Runs:         runmgr.New(db, bus, DefaultKeepRuns).WithMetrics(mx),
 		DataDir:      flags.dataDir,
 		APIToken:     token,
+		Metrics:      mx.Handler(),
 		ConfigSource: configSource(cmd.Context()),
 		LoadConfig: func(ctx context.Context) (*manifest.Resolved, error) {
 			return loadConfig(ctx)
