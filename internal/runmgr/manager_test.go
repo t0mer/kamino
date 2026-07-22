@@ -8,7 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/t0mer/kamino/internal/download"
 	"github.com/t0mer/kamino/internal/events"
+	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/plan"
 	"github.com/t0mer/kamino/internal/runmgr"
@@ -46,11 +48,19 @@ func testPlan(items ...manifest.Item) *plan.Plan {
 	return p
 }
 
+// request builds a StartRequest wired with a kexec.FakeExecutor and a
+// download.FakeDownloader, so every test in this file resolves its plan
+// entirely in memory. Without this, aptItem's steps (apt installs of
+// packages that don't exist, like "a" and "b") would run through runmgr's
+// production default — kexec.NewRealExecutor() — and genuinely invoke
+// apt-get as root on whatever machine runs `go test`.
 func request(p *plan.Plan) runmgr.StartRequest {
 	return runmgr.StartRequest{
 		Plan:     p,
 		Resolved: &manifest.Resolved{SHA: "abc123"},
 		Secrets:  secrets.New(),
+		Exec:     kexec.NewFakeExecutor(),
+		Download: download.NewFakeDownloader(),
 	}
 }
 
