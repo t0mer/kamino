@@ -25,7 +25,7 @@ func TestNewRegistryResolvesEveryImplementedType(t *testing.T) {
 		Download: download.NewFakeDownloader(),
 		TempDir:  t.TempDir(),
 	}
-	lookup := engine.NewRegistry(deps, fakeScriptSource{}, "main")
+	lookup := engine.NewRegistry(deps, fakeScriptSource{}, "main", nil)
 
 	for _, typ := range []manifest.ItemType{
 		manifest.ItemApt, manifest.ItemDeb, manifest.ItemTarball,
@@ -37,16 +37,17 @@ func TestNewRegistryResolvesEveryImplementedType(t *testing.T) {
 	}
 }
 
-func TestNewRegistryHasNoRunnerForComposeStackOrSnap(t *testing.T) {
+func TestNewRegistryHasComposeButNotSnap(t *testing.T) {
 	deps := runners.Deps{
 		Exec:     kexec.NewFakeExecutor(),
 		Download: download.NewFakeDownloader(),
 		TempDir:  t.TempDir(),
 	}
-	lookup := engine.NewRegistry(deps, fakeScriptSource{}, "main")
+	lookup := engine.NewRegistry(deps, fakeScriptSource{}, "main", nil)
 
-	for _, typ := range []manifest.ItemType{manifest.ItemComposeStack, manifest.ItemSnap} {
-		_, ok := lookup(typ)
-		assert.False(t, ok, "expected no runner registered for %q", typ)
-	}
+	_, ok := lookup(manifest.ItemComposeStack)
+	assert.True(t, ok, "compose_stack must now resolve a runner")
+
+	_, ok = lookup(manifest.ItemSnap)
+	assert.False(t, ok, "snap remains unimplemented")
 }

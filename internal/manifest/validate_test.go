@@ -168,3 +168,26 @@ func TestValidateOrdersSourceProblemsDeterministically(t *testing.T) {
 	assert.Contains(t, errs[0].Message, "source for arch amd64 must use https")
 	assert.Contains(t, errs[1].Message, "source for arch arm64 must use https")
 }
+
+func TestValidateComposeStackRequiresPathFilesAndComposeFile(t *testing.T) {
+	mk := func(it manifest.Item) manifest.Problems {
+		it.CategoryID = "containers"
+		r := &manifest.Resolved{
+			Manifest:   manifest.Manifest{Schema: 1},
+			Categories: []manifest.Category{{ID: "containers", Items: []manifest.Item{it}}},
+		}
+		return manifest.Validate(r).Errors()
+	}
+
+	noPath := mk(manifest.Item{ID: "a", Type: manifest.ItemComposeStack, Files: []string{"docker-compose.yaml"}})
+	assert.NotEmpty(t, noPath, "missing path must be an error")
+
+	noFiles := mk(manifest.Item{ID: "b", Type: manifest.ItemComposeStack, Path: "stacks/x"})
+	assert.NotEmpty(t, noFiles, "missing files must be an error")
+
+	noCompose := mk(manifest.Item{ID: "c", Type: manifest.ItemComposeStack, Path: "stacks/x", Files: []string{"prometheus.yml"}})
+	assert.NotEmpty(t, noCompose, "files without a compose file must be an error")
+
+	ok := mk(manifest.Item{ID: "d", Type: manifest.ItemComposeStack, Path: "stacks/x", Files: []string{"docker-compose.yaml"}})
+	assert.Empty(t, ok, "a well-formed compose_stack has no errors")
+}

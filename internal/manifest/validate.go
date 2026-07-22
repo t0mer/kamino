@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"fmt"
+	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -78,6 +80,9 @@ var downloadTypes = map[ItemType]bool{ItemTarball: true, ItemDeb: true, ItemBina
 // packageTypes are item types that must declare packages.
 var packageTypes = map[ItemType]bool{ItemApt: true, ItemPip: true, ItemSnap: true}
 
+// composeFileRE matches the file docker compose is pointed at.
+var composeFileRE = regexp.MustCompile(`^(docker-compose|compose)\.ya?ml$`)
+
 // Validate checks a resolved config repo and returns every problem found.
 // It deliberately does not stop at the first error: an operator fixing their
 // own repo wants the whole list, not one problem per round trip.
@@ -131,6 +136,26 @@ func validateItem(file string, it Item) Problems {
 
 	if packageTypes[it.Type] && len(it.Packages) == 0 {
 		problem("packages", fmt.Sprintf("type %q requires packages", it.Type), SeverityError)
+	}
+
+	if it.Type == ItemComposeStack {
+		if it.Path == "" {
+			problem("path", "compose_stack requires a path", SeverityError)
+		}
+		if len(it.Files) == 0 {
+			problem("files", "compose_stack requires files", SeverityError)
+		} else {
+			hasCompose := false
+			for _, f := range it.Files {
+				if composeFileRE.MatchString(path.Base(f)) {
+					hasCompose = true
+					break
+				}
+			}
+			if !hasCompose {
+				problem("files", "compose_stack files must include a docker-compose file", SeverityError)
+			}
+		}
 	}
 
 	if it.CheckContains != "" && it.Check == "" {

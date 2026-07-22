@@ -7,17 +7,17 @@ import (
 
 // NewRegistry wires every implemented runner to its item type.
 //
-// compose_stack and snap are deliberately absent: an item using them fails its
-// step with "no runner for item type", which is a clearer outcome than a
-// half-implemented installer.
-func NewRegistry(d runners.Deps, src runners.ScriptSource, ref string) RunnerFor {
+// snap is deliberately absent: an item using it fails its step with "no runner
+// for item type", which is a clearer outcome than a half-implemented installer.
+func NewRegistry(d runners.Deps, src runners.ScriptSource, ref string, secrets runners.SecretSource) RunnerFor {
 	table := map[manifest.ItemType]runners.Runner{
-		manifest.ItemApt:     runners.NewApt(d),
-		manifest.ItemDeb:     runners.NewDeb(d),
-		manifest.ItemTarball: runners.NewTarball(d),
-		manifest.ItemBinary:  runners.NewBinary(d),
-		manifest.ItemPip:     runners.NewPip(d),
-		manifest.ItemScript:  runners.NewScript(d, src, ref),
+		manifest.ItemApt:          runners.NewApt(d),
+		manifest.ItemDeb:          runners.NewDeb(d),
+		manifest.ItemTarball:      runners.NewTarball(d),
+		manifest.ItemBinary:       runners.NewBinary(d),
+		manifest.ItemPip:          runners.NewPip(d),
+		manifest.ItemScript:       runners.NewScript(d, src, ref),
+		manifest.ItemComposeStack: runners.NewCompose(d, src, ref, secrets),
 	}
 	return func(t manifest.ItemType) (runners.Runner, bool) {
 		r, ok := table[t]

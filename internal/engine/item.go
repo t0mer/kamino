@@ -75,6 +75,8 @@ func Resolve(it manifest.Item, arch string, defaults manifest.Defaults, s *secre
 		PathExport: it.PathExport,
 		Path:       it.Path,
 		Files:      it.Files,
+		EnvFile:    it.EnvFile,
+		Secrets:    it.Secrets,
 		Timeout:    timeout,
 	}
 

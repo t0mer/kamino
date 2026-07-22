@@ -23,3 +23,11 @@ items:
     depends_on: ["tools/docker"]
     check: "docker compose version"
     check_contains: "Docker Compose version"
+
+  - id: monitoring-stack
+    name: Monitoring Stack
+    type: compose_stack
+    path: stacks/monitoring
+    files:
+      - docker-compose.yaml
+    depends_on: ["tools/docker", "tools/docker-compose"]

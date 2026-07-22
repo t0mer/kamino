@@ -44,9 +44,9 @@
         "python": { "type": "string" },
         "install_dir": { "type": "string" },
         "path_export": { "type": "string" },
-        "path": { "type": "string" },
-        "files": { "type": "array", "items": { "type": "string" } },
-        "env_file": { "type": "string" },
+        "path": { "type": "string", "description": "Directory inside the config repo holding a compose stack's files (compose_stack)." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "Files fetched from `path` and materialised before `docker compose up -d`. Must include a docker-compose file." },
+        "env_file": { "type": "string", "description": "Marker that a compose_stack consumes secret env vars; values come from `secrets`, injected as process env, never written to disk." },
         "depends_on": {
           "type": "array",
           "items": { "type": "string", "pattern": "^[a-z0-9-]+/[a-z0-9-]+$" }
@@ -60,7 +60,7 @@
           "type": "array",
           "items": { "type": "string", "enum": ["amd64", "arm64"] }
         },
-        "secrets": { "type": "array", "items": { "type": "string" } }
+        "secrets": { "type": "array", "items": { "type": "string" }, "description": "Names of secret values the UI/CLI must supply at run time; never stored in the config repo." }
       }
     }
   }
