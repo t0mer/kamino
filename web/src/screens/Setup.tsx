@@ -45,7 +45,10 @@ export function Setup() {
   }
 
   const declaredSecrets = plan.data?.secrets ?? [];
-  const missingSecret = declaredSecrets.some((name) => !secrets[name]);
+  // A whitespace-only value is not a filled secret — treat it as missing so
+  // Install stays disabled. The value the operator typed is still submitted
+  // verbatim; only this "is it filled?" check trims.
+  const missingSecret = declaredSecrets.some((name) => !(secrets[name] ?? "").trim());
 
   async function handleInstall() {
     if (!profile) return;

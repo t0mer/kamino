@@ -30,6 +30,11 @@ describe("Setup secret gating", () => {
     const install = await screen.findByRole("button", { name: /install/i });
     expect(install).toBeDisabled();
 
+    // A whitespace-only value must not count as filled — Install stays disabled.
+    await userEvent.type(screen.getByLabelText("CF_TUNNEL_TOKEN"), "   ");
+    expect(install).toBeDisabled();
+
+    await userEvent.clear(screen.getByLabelText("CF_TUNNEL_TOKEN"));
     await userEvent.type(screen.getByLabelText("CF_TUNNEL_TOKEN"), "abc");
     expect(install).toBeEnabled();
   });
