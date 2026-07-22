@@ -10,7 +10,7 @@ import (
 	"github.com/t0mer/kamino/internal/server"
 )
 
-// TestCatchAllDoesNotShadowTheAPI proves that mounting the SPA catch-all leaves
+// TestCatchAllLeavesAPIAndHealthzIntact proves that mounting the SPA catch-all leaves
 // the API and healthz reachable. Before a frontend build there is no SPA to
 // serve, so an unknown UI route 404s — but /api and /healthz must be unchanged.
 func TestCatchAllLeavesAPIAndHealthzIntact(t *testing.T) {
