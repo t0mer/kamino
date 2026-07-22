@@ -1,0 +1,69 @@
+# goreleaser configuration for Kamino.
+#
+# Deliberately minimal: binaries only, linux/amd64 and linux/arm64, archives
+# plus checksums.txt — no Docker image, no packages, no armv7. The single Go
+# binary embeds the web UI, so the UI is built into internal/webui/dist by a
+# before-hook and go:embed picks it up during the build.
+version: 2
+
+project_name: kamino
+
+before:
+  hooks:
+    # Embed a fresh UI build before compiling; go:embed reads whatever is in
+    # internal/webui/dist at build time.
+    - ./scripts/build-ui.sh
+    - go mod download
+
+builds:
+  - id: kamino
+    main: ./cmd/kamino
+    binary: kamino
+    env:
+      - CGO_ENABLED=0 # pure Go (modernc.org/sqlite): clean static cross-compile
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/t0mer/kamino/internal/version.Version={{ .Version }}
+    # Reproducible builds: stamp binaries with the commit time, not build time.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: kamino
+    formats: [tar.gz]
+    # Matches the install instructions in the README: kamino_linux_amd64.tar.gz
+    # and kamino_linux_arm64.tar.gz.
+    name_template: "kamino_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  # For local `goreleaser build --snapshot` off an untagged tree.
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: t0mer
+    name: kamino
+  draft: false
+  # A YYYY.M.PATCH tag is a full release; nothing here is pre-release.
+  prerelease: false
