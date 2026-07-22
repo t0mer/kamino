@@ -52,6 +52,7 @@ func newRootCmd() *cobra.Command {
 		newValidateCmd(),
 		newPlanCmd(),
 		newApplyCmd(),
+		newServeCmd(),
 	)
 	return cmd
 }
