@@ -1,10 +1,14 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import App from "./App";
 
 describe("App", () => {
-  it("renders the product name", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("shows the token gate when no token is stored", async () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Kamino" })).toBeInTheDocument();
+    expect(await screen.findByLabelText(/api token/i)).toBeInTheDocument();
   });
 });
