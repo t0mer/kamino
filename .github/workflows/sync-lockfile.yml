@@ -1,0 +1,57 @@
+name: Sync lockfile
+
+# Regenerate web/package-lock.json in the CI environment and commit it back, so
+# the Release build's `npm ci` succeeds on the reproducible fast path instead of
+# relying on build-ui.sh's self-heal fallback. Needed because an optional,
+# cross-platform wasm dependency subtree (rolldown's wasm32-wasi binding →
+# @napi-rs/wasm-runtime → @emnapi/*) resolves its caret ranges differently
+# between a developer machine and a clean-cache CI, and npm won't re-resolve
+# that subtree off the host platform — only CI can produce the authoritative
+# lockfile. Run this whenever the frontend deps drift; then `npm ci` is truth.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }} # check out the branch, not a detached SHA, so we can push back
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Regenerate lockfile from scratch
+        working-directory: web
+        run: |
+          set -euo pipefail
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
+
+      - name: Verify npm ci and build against the regenerated lockfile
+        working-directory: web
+        run: |
+          set -euo pipefail
+          rm -rf node_modules
+          npm ci --no-audit --no-fund   # must be in sync now, or this fails the job
+          npm run build
+
+      - name: Commit the lockfile if it changed
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- web/package-lock.json; then
+            echo "lockfile already in sync with CI resolution; nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add web/package-lock.json
+          git commit -m "sync web lockfile to CI dependency resolution"
+          git push origin "HEAD:${BRANCH}"
