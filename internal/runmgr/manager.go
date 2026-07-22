@@ -242,7 +242,7 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 
 	lookup := m.runnerLookup
 	if lookup == nil {
-		lookup = engine.NewRegistry(deps, req.ConfigSource, req.Plan.ConfigSHA)
+		lookup = engine.NewRegistry(deps, req.ConfigSource, req.Plan.ConfigSHA, req.Secrets)
 	}
 
 	eng := engine.New(

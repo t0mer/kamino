@@ -223,7 +223,7 @@ func execute(cmd *cobra.Command, built *plan.Plan, resolved *manifest.Resolved,
 
 		eng := engine.New(
 			deps.Exec,
-			engine.NewRegistry(deps, configSource(ctx), built.ConfigSHA),
+			engine.NewRegistry(deps, configSource(ctx), built.ConfigSHA, store),
 			engine.NewMultiSink(
 				state.NewSink(db, stepIDs),
 				newTermSink(out, len(built.Steps), names, verbose),
