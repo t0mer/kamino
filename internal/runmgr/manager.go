@@ -233,14 +233,7 @@ func (m *Manager) execute(ctx context.Context, runID string, req StartRequest, s
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	exec := req.Exec
-	if exec == nil {
-		exec = kexec.NewRealExecutor()
-	}
-	dl := req.Download
-	if dl == nil {
-		dl = download.NewHTTPDownloader(nil)
-	}
+	exec, dl := resolveExecutors(req.Exec, req.Download)
 	deps := runners.Deps{
 		Exec:     exec,
 		Download: dl,
@@ -321,4 +314,18 @@ func (m *Manager) release() {
 		m.cancel = nil
 	}
 	m.active = ""
+}
+
+// resolveExecutors picks the executor and downloader a run will use. A nil
+// request field means "use the real thing" — a test injects fakes so a run
+// resolves in memory, but production, which sets neither, must always fall
+// through to executors that genuinely install as root.
+func resolveExecutors(e kexec.CommandExecutor, d download.Downloader) (kexec.CommandExecutor, download.Downloader) {
+	if e == nil {
+		e = kexec.NewRealExecutor()
+	}
+	if d == nil {
+		d = download.NewHTTPDownloader(nil)
+	}
+	return e, d
 }

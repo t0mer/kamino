@@ -9,8 +9,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/t0mer/kamino/internal/download"
 	"github.com/t0mer/kamino/internal/engine/runners"
 	"github.com/t0mer/kamino/internal/events"
+	kexec "github.com/t0mer/kamino/internal/exec"
 	"github.com/t0mer/kamino/internal/manifest"
 	"github.com/t0mer/kamino/internal/plan"
 	"github.com/t0mer/kamino/internal/secrets"
@@ -184,4 +186,30 @@ func TestExecuteRecoversFromAPanickingRunner(t *testing.T) {
 
 	_, busy := m.Active()
 	assert.False(t, busy, "the run slot must be released even after a panic")
+}
+
+// TestResolveExecutorsDefaultsToTheRealExecutor pins the safety property in the
+// production direction: a StartRequest that injects nothing must run through
+// the executors that genuinely install as root, never a fake or a nil. Making
+// the executor injectable for tests must not silently leave production
+// resolving to something that does nothing.
+func TestResolveExecutorsDefaultsToTheRealExecutor(t *testing.T) {
+	e, d := resolveExecutors(nil, nil)
+
+	require.NotNil(t, e)
+	require.NotNil(t, d)
+	assert.IsType(t, &kexec.RealExecutor{}, e,
+		"a nil executor in production must resolve to the real one")
+	assert.IsType(t, &download.HTTPDownloader{}, d,
+		"a nil downloader in production must resolve to the real one")
+}
+
+func TestResolveExecutorsKeepsInjectedFakes(t *testing.T) {
+	fakeExec := kexec.NewFakeExecutor()
+	fakeDL := download.NewFakeDownloader()
+
+	e, d := resolveExecutors(fakeExec, fakeDL)
+
+	assert.Same(t, fakeExec, e, "an injected executor must be used unchanged")
+	assert.Same(t, fakeDL, d, "an injected downloader must be used unchanged")
 }
