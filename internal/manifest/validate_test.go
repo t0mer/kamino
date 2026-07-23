@@ -169,6 +169,65 @@ func TestValidateOrdersSourceProblemsDeterministically(t *testing.T) {
 	assert.Contains(t, errs[1].Message, "source for arch arm64 must use https")
 }
 
+// errorsForScriptSource validates a single script item whose source is src and
+// returns the resulting errors. src is a bare string, which the parser would
+// normally fan out across arches; here it is set directly on both.
+func errorsForScriptSource(t *testing.T, src string) manifest.Problems {
+	t.Helper()
+	r := &manifest.Resolved{
+		Manifest: manifest.Manifest{Schema: 1},
+		Categories: []manifest.Category{{
+			ID:   "tools",
+			Name: "Tools",
+			Items: []manifest.Item{{
+				ID:         "s",
+				Name:       "S",
+				Type:       manifest.ItemScript,
+				Source:     manifest.Source{"amd64": src, "arm64": src},
+				CategoryID: "tools",
+			}},
+		}},
+	}
+	return manifest.Validate(r).Errors()
+}
+
+func TestValidateAllowsLocalScriptSource(t *testing.T) {
+	assert.Empty(t, errorsForScriptSource(t, "scripts/setup.sh"),
+		"a repo-relative script path must be accepted")
+	assert.Empty(t, errorsForScriptSource(t, "https://get.docker.com"),
+		"an https script source must still be accepted")
+}
+
+func TestValidateRejectsUnsafeAndInsecureScriptSource(t *testing.T) {
+	// A non-https URL scheme is not a local path; it must be rejected.
+	assert.NotEmpty(t, errorsForScriptSource(t, "http://evil.example/x.sh"),
+		"an http script source must be rejected")
+	// Absolute paths and parent traversal escape the config repo root.
+	assert.NotEmpty(t, errorsForScriptSource(t, "/etc/passwd"),
+		"an absolute script source must be rejected")
+	assert.NotEmpty(t, errorsForScriptSource(t, "../../etc/passwd"),
+		"a traversing script source must be rejected")
+}
+
+func TestValidateStillRequiresHTTPSForNonScriptLocalSource(t *testing.T) {
+	// The local-path allowance is script-only: a tarball with a bare path must
+	// still be rejected as non-https.
+	r := &manifest.Resolved{
+		Manifest: manifest.Manifest{Schema: 1},
+		Categories: []manifest.Category{{
+			ID: "dev", Name: "Dev",
+			Items: []manifest.Item{{
+				ID: "t", Name: "T", Type: manifest.ItemTarball, Version: "1.0.0",
+				Source:     manifest.Source{"amd64": "scripts/x.tar.gz", "arm64": "scripts/x.tar.gz"},
+				CategoryID: "dev",
+			}},
+		}},
+	}
+	errs := manifest.Validate(r).Errors()
+	require.NotEmpty(t, errs)
+	assert.Contains(t, errs[0].Message, "https")
+}
+
 func TestValidateComposeStackRequiresPathFilesAndComposeFile(t *testing.T) {
 	mk := func(it manifest.Item) manifest.Problems {
 		it.CategoryID = "containers"

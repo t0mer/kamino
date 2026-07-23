@@ -189,13 +189,46 @@ func validateItem(file string, it Item) Problems {
 	sort.Strings(sourceArches)
 
 	for _, arch := range sourceArches {
-		url := it.Source[arch]
-		if url != "" && !strings.HasPrefix(url, "https://") {
-			problem("source", fmt.Sprintf("source for arch %s must use https, got %q", arch, url), SeverityError)
+		src := it.Source[arch]
+		if src == "" {
+			continue
+		}
+		// A script may run from a repo-relative path — fetched from the config
+		// repo at run time, exactly like a compose_stack's files — as well as
+		// from an https URL. Every other type that carries a source downloads
+		// it directly, so it must be https. A local path is anything without a
+		// URL scheme; a non-https scheme (http://, ftp://…) is never a path and
+		// is always rejected.
+		if it.Type == ItemScript && !strings.Contains(src, "://") {
+			if !isSafeRepoPath(src) {
+				problem("source", fmt.Sprintf("source for arch %s is not a safe repo-relative path: %q", arch, src), SeverityError)
+			}
+			continue
+		}
+		if !strings.HasPrefix(src, "https://") {
+			problem("source", fmt.Sprintf("source for arch %s must use https, got %q", arch, src), SeverityError)
 		}
 	}
 
 	return ps
+}
+
+// isSafeRepoPath reports whether p is a relative path with no parent traversal.
+// A local script source is fetched from the untrusted config repo and
+// materialised under a per-run temp dir, so — like a compose_stack file — it
+// must not be absolute or contain a ".." segment that could escape the root.
+// The runtime fetch enforces this again (remote.SafeJoin); catching it here
+// turns a run-time failure into a validation error the author sees up front.
+func isSafeRepoPath(p string) bool {
+	if p == "" || path.IsAbs(p) {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // validateDeps checks that every dependency resolves, then that the graph is
